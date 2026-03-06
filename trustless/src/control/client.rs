@@ -1,5 +1,3 @@
-use std::net::SocketAddr;
-
 use super::state::ProxyState;
 
 pub struct Client {
@@ -23,7 +21,7 @@ impl Client {
             .with_root_certificates(root_store)
             .with_no_client_auth();
 
-        let addr: SocketAddr = ([127, 0, 0, 1], state.port).into();
+        let addr: std::net::SocketAddr = ([127, 0, 0, 1], state.port).into();
         let inner = reqwest::Client::builder()
             .use_preconfigured_tls(tls_config)
             .resolve("trustless", addr)

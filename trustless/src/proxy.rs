@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 const VIA_VALUE: &str = "1.1 trustless";
 
 #[derive(thiserror::Error, Debug)]
@@ -68,11 +66,11 @@ pub struct ProxyState {
 pub fn proxy_router(state: ProxyState) -> axum::Router {
     axum::Router::new()
         .fallback(proxy_handler)
-        .with_state(Arc::new(state))
+        .with_state(std::sync::Arc::new(state))
 }
 
 async fn proxy_handler(
-    axum::extract::State(state): axum::extract::State<Arc<ProxyState>>,
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<ProxyState>>,
     axum::Extension(ClientAddr(client_addr)): axum::Extension<ClientAddr>,
     req: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
@@ -229,7 +227,7 @@ fn strip_hop_by_hop_headers(headers: &mut http::HeaderMap, preserve_upgrade: boo
 }
 
 async fn handle_request(
-    state: Arc<ProxyState>,
+    state: std::sync::Arc<ProxyState>,
     client_addr: std::net::SocketAddr,
     req: axum::extract::Request,
     backend: std::net::SocketAddr,
@@ -289,7 +287,7 @@ async fn handle_request(
 }
 
 async fn handle_upgrade(
-    _state: Arc<ProxyState>,
+    _state: std::sync::Arc<ProxyState>,
     client_addr: std::net::SocketAddr,
     req: axum::extract::Request,
     backend: std::net::SocketAddr,

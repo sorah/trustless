@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 #[derive(thiserror::Error, Debug)]
 pub enum RouteError {
     #[error(transparent)]
@@ -31,7 +29,7 @@ struct Inner {
 
 #[derive(Clone)]
 pub struct RouteTable {
-    inner: Arc<parking_lot::Mutex<Inner>>,
+    inner: std::sync::Arc<parking_lot::Mutex<Inner>>,
 }
 
 pub fn validate_hostname(host: &str) -> Result<(), RouteError> {
@@ -97,7 +95,7 @@ pub fn strip_port(host: &str) -> &str {
 impl RouteTable {
     pub fn new(state_dir: std::path::PathBuf) -> Self {
         Self {
-            inner: Arc::new(parking_lot::Mutex::new(Inner {
+            inner: std::sync::Arc::new(parking_lot::Mutex::new(Inner {
                 state_dir,
                 cached_routes: std::collections::HashMap::new(),
                 cached_mtime: None,

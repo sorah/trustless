@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct ProxyState {
     pub pid: u32,
@@ -8,7 +6,7 @@ pub struct ProxyState {
 }
 
 impl ProxyState {
-    pub fn path() -> PathBuf {
+    pub fn path() -> std::path::PathBuf {
         crate::config::state_dir().join("proxy.json")
     }
 

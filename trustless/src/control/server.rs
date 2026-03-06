@@ -1,8 +1,3 @@
-use axum::Json;
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
-
 #[derive(Clone)]
 pub struct ServerState {
     shutdown_tx: std::sync::Arc<std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
@@ -32,30 +27,30 @@ impl ServerState {
 
 fn control_router(state: ServerState) -> axum::Router {
     axum::Router::new()
-        .route("/ping", get(ping))
-        .route("/stop", post(stop))
-        .route("/reload", post(reload))
-        .route("/status", get(status))
+        .route("/ping", axum::routing::get(ping))
+        .route("/stop", axum::routing::post(stop))
+        .route("/reload", axum::routing::post(reload))
+        .route("/status", axum::routing::get(status))
         .fallback(not_found)
         .with_state(state)
 }
 
-async fn ping() -> Json<super::OkResponse> {
-    Json(super::OkResponse { ok: true })
+async fn ping() -> axum::Json<super::OkResponse> {
+    axum::Json(super::OkResponse { ok: true })
 }
 
 async fn stop(
     axum::extract::State(state): axum::extract::State<ServerState>,
-) -> Json<super::OkResponse> {
+) -> axum::Json<super::OkResponse> {
     if let Some(tx) = state.shutdown_tx.lock().unwrap().take() {
         let _ = tx.send(());
     }
-    Json(super::OkResponse { ok: true })
+    axum::Json(super::OkResponse { ok: true })
 }
 
 async fn reload(
     axum::extract::State(state): axum::extract::State<ServerState>,
-) -> Json<super::ReloadResponse> {
+) -> axum::Json<super::ReloadResponse> {
     let results = state.orchestrator.restart_all().await;
     let mut per_provider = std::collections::HashMap::new();
     let mut all_ok = true;
@@ -82,7 +77,7 @@ async fn reload(
             }
         }
     }
-    Json(super::ReloadResponse {
+    axum::Json(super::ReloadResponse {
         ok: all_ok,
         results: per_provider,
     })
@@ -90,7 +85,7 @@ async fn reload(
 
 async fn status(
     axum::extract::State(state): axum::extract::State<ServerState>,
-) -> Json<super::StatusResponse> {
+) -> axum::Json<super::StatusResponse> {
     let providers = state.registry.list_providers();
     let routes = state
         .route_table
@@ -100,7 +95,7 @@ async fn status(
         .map(|(k, v)| (k, v.to_string()))
         .collect();
 
-    Json(super::StatusResponse {
+    axum::Json(super::StatusResponse {
         pid: std::process::id(),
         port: state.port,
         providers,
@@ -108,10 +103,10 @@ async fn status(
     })
 }
 
-async fn not_found() -> (StatusCode, Json<super::ErrorResponse>) {
+async fn not_found() -> (axum::http::StatusCode, axum::Json<super::ErrorResponse>) {
     (
-        StatusCode::NOT_FOUND,
-        Json(super::ErrorResponse {
+        axum::http::StatusCode::NOT_FOUND,
+        axum::Json(super::ErrorResponse {
             error: "not found".to_owned(),
         }),
     )
@@ -137,14 +132,15 @@ pub fn dispatch_router(state: ServerState, proxy: axum::Router) -> axum::Router 
 
     axum::Router::new().fallback(
         move |req: axum::http::Request<axum::body::Body>| async move {
+            use axum::response::IntoResponse as _;
             let host = extract_host(&req);
             let is_control = host.as_deref() == Some("trustless");
 
             if is_control {
-                let resp: Response = control.oneshot(req).await.into_response();
+                let resp: axum::response::Response = control.oneshot(req).await.into_response();
                 resp
             } else {
-                let resp: Response = proxy.oneshot(req).await.into_response();
+                let resp: axum::response::Response = proxy.oneshot(req).await.into_response();
                 resp
             }
         },
@@ -154,8 +150,6 @@ pub fn dispatch_router(state: ServerState, proxy: axum::Router) -> axum::Router 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::body::Body;
-    use axum::http::Request;
     use tower::ServiceExt as _;
 
     fn test_state() -> (ServerState, tokio::sync::oneshot::Receiver<()>) {
@@ -171,7 +165,8 @@ mod tests {
     }
 
     fn stub_proxy() -> axum::Router {
-        axum::Router::new().fallback(|| async { (StatusCode::BAD_GATEWAY, "no backend") })
+        axum::Router::new()
+            .fallback(|| async { (axum::http::StatusCode::BAD_GATEWAY, "no backend") })
     }
 
     #[tokio::test]
@@ -179,14 +174,14 @@ mod tests {
         let (state, _rx) = test_state();
         let app = dispatch_router(state, stub_proxy());
 
-        let req = Request::builder()
+        let req = axum::http::Request::builder()
             .uri("/ping")
             .header("host", "trustless")
-            .body(Body::empty())
+            .body(axum::body::Body::empty())
             .unwrap();
 
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
 
         let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
         let json: super::super::OkResponse = serde_json::from_slice(&body).unwrap();
@@ -198,15 +193,15 @@ mod tests {
         let (state, rx) = test_state();
         let app = dispatch_router(state, stub_proxy());
 
-        let req = Request::builder()
+        let req = axum::http::Request::builder()
             .method("POST")
             .uri("/stop")
             .header("host", "trustless")
-            .body(Body::empty())
+            .body(axum::body::Body::empty())
             .unwrap();
 
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
 
         let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
         let json: super::super::OkResponse = serde_json::from_slice(&body).unwrap();
@@ -221,14 +216,14 @@ mod tests {
         let (state, _rx) = test_state();
         let app = dispatch_router(state, stub_proxy());
 
-        let req = Request::builder()
+        let req = axum::http::Request::builder()
             .uri("/nonexistent")
             .header("host", "trustless")
-            .body(Body::empty())
+            .body(axum::body::Body::empty())
             .unwrap();
 
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
 
         let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
         let json: super::super::ErrorResponse = serde_json::from_slice(&body).unwrap();
@@ -240,14 +235,14 @@ mod tests {
         let (state, _rx) = test_state();
         let app = dispatch_router(state, stub_proxy());
 
-        let req = Request::builder()
+        let req = axum::http::Request::builder()
             .uri("/ping")
             .header("host", "example.com")
-            .body(Body::empty())
+            .body(axum::body::Body::empty())
             .unwrap();
 
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+        assert_eq!(resp.status(), axum::http::StatusCode::BAD_GATEWAY);
     }
 
     #[tokio::test]
@@ -255,10 +250,13 @@ mod tests {
         let (state, _rx) = test_state();
         let app = dispatch_router(state, stub_proxy());
 
-        let req = Request::builder().uri("/ping").body(Body::empty()).unwrap();
+        let req = axum::http::Request::builder()
+            .uri("/ping")
+            .body(axum::body::Body::empty())
+            .unwrap();
 
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+        assert_eq!(resp.status(), axum::http::StatusCode::BAD_GATEWAY);
     }
 
     #[tokio::test]
@@ -266,14 +264,14 @@ mod tests {
         let (state, _rx) = test_state();
         let app = dispatch_router(state, stub_proxy());
 
-        let req = Request::builder()
+        let req = axum::http::Request::builder()
             .uri("/status")
             .header("host", "trustless")
-            .body(Body::empty())
+            .body(axum::body::Body::empty())
             .unwrap();
 
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
 
         let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
         let json: super::super::StatusResponse = serde_json::from_slice(&body).unwrap();
@@ -288,15 +286,15 @@ mod tests {
         let (state, _rx) = test_state();
         let app = dispatch_router(state, stub_proxy());
 
-        let req = Request::builder()
+        let req = axum::http::Request::builder()
             .method("POST")
             .uri("/reload")
             .header("host", "trustless")
-            .body(Body::empty())
+            .body(axum::body::Body::empty())
             .unwrap();
 
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
 
         let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
         let json: super::super::ReloadResponse = serde_json::from_slice(&body).unwrap();

@@ -1,5 +1,3 @@
-use serde_with::serde_as;
-
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct Request {
     pub id: u64,
@@ -19,7 +17,7 @@ pub enum RequestBody {
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct InitializeParams {}
 
-#[serde_as]
+#[serde_with::serde_as]
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct SignParams {
     pub certificate_id: String,
@@ -63,7 +61,7 @@ pub struct CertificateInfo {
     pub schemes: Vec<String>,
 }
 
-#[serde_as]
+#[serde_with::serde_as]
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct SignResult {
     #[serde_as(as = "serde_with::base64::Base64")]

@@ -1,7 +1,5 @@
-use std::sync::Arc;
-
 fn generate_test_cert() -> (
-    Arc<rustls::sign::CertifiedKey>,
+    std::sync::Arc<rustls::sign::CertifiedKey>,
     rustls_pki_types::CertificateDer<'static>,
     String,
 ) {
@@ -16,7 +14,7 @@ fn generate_test_cert() -> (
     let cert_der = rustls_pki_types::CertificateDer::from(cert.der().to_vec());
     let key_der = rustls_pki_types::PrivateKeyDer::try_from(key_pair.serialize_der()).unwrap();
     let signing_key = rustls::crypto::aws_lc_rs::sign::any_ecdsa_type(&key_der).unwrap();
-    let certified_key = Arc::new(rustls::sign::CertifiedKey::new(
+    let certified_key = std::sync::Arc::new(rustls::sign::CertifiedKey::new(
         vec![cert_der.clone()],
         signing_key,
     ));
@@ -24,17 +22,18 @@ fn generate_test_cert() -> (
 }
 
 fn start_test_server(
-    certified_key: Arc<rustls::sign::CertifiedKey>,
+    certified_key: std::sync::Arc<rustls::sign::CertifiedKey>,
 ) -> (
     tokio::task::JoinHandle<()>,
     u16,
     tokio::sync::oneshot::Receiver<()>,
 ) {
-    let cert_resolver = Arc::new(trustless::signer::FixedCertResolver::new(certified_key));
+    let cert_resolver =
+        std::sync::Arc::new(trustless::signer::FixedCertResolver::new(certified_key));
     let tls_config = rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_cert_resolver(cert_resolver);
-    let tls_acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls_config));
+    let tls_acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(tls_config));
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -125,11 +124,12 @@ async fn tls_handshake_with_control_cert() {
 
     let (certified_key, cert_der, _cert_pem) = generate_test_cert();
 
-    let cert_resolver = Arc::new(trustless::signer::FixedCertResolver::new(certified_key));
+    let cert_resolver =
+        std::sync::Arc::new(trustless::signer::FixedCertResolver::new(certified_key));
     let tls_config = rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_cert_resolver(cert_resolver);
-    let tls_acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls_config));
+    let tls_acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(tls_config));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -147,7 +147,7 @@ async fn tls_handshake_with_control_cert() {
         .with_root_certificates(root_store)
         .with_no_client_auth();
 
-    let connector = tokio_rustls::TlsConnector::from(Arc::new(client_config));
+    let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(client_config));
     let tcp = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
         .await
         .unwrap();

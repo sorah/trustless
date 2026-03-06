@@ -1,5 +1,3 @@
-use rustls_pki_types::pem::PemObject as _;
-
 #[derive(clap::Args)]
 pub struct TestProviderArgs {
     /// Domain (SNI) to select a certificate for testing
@@ -13,6 +11,8 @@ pub struct TestProviderArgs {
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 pub async fn run(args: &TestProviderArgs) -> Result<(), anyhow::Error> {
+    use rustls_pki_types::pem::PemObject as _;
+
     // Spawn provider
     eprintln!("Spawning provider: {:?}", args.command);
     let process = crate::provider::process::ProviderProcess::spawn(&args.command).await?;

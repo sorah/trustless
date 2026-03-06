@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 #[derive(clap::Subcommand)]
 pub enum ProxyCommand {
     /// Start the proxy server
@@ -72,7 +70,10 @@ async fn run_start_async(args: &ProxyStartArgs) -> anyhow::Result<()> {
 
     // Set up provider registry with control cert
     let registry = crate::provider::ProviderRegistry::new();
-    registry.register_control_cert(Arc::new(certified_key), vec!["trustless".to_owned()]);
+    registry.register_control_cert(
+        std::sync::Arc::new(certified_key),
+        vec!["trustless".to_owned()],
+    );
 
     // Initialize providers from configured profiles
     let orchestrator = crate::provider::ProviderOrchestrator::new(registry.clone());
@@ -167,13 +168,11 @@ async fn serve(
     app: axum::Router,
     shutdown_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<()> {
-    use tokio::signal::unix::{SignalKind, signal};
-
-    let mut sigterm = signal(SignalKind::terminate())?;
-    let mut sigint = signal(SignalKind::interrupt())?;
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
 
     let graceful = hyper_util::server::graceful::GracefulShutdown::new();
-    let tls_params = Arc::new(tls_params);
+    let tls_params = std::sync::Arc::new(tls_params);
 
     let shutdown = async {
         tokio::select! {
@@ -220,7 +219,7 @@ async fn serve(
 }
 
 async fn handle_connection(
-    tls_params: Arc<TlsParams>,
+    tls_params: std::sync::Arc<TlsParams>,
     stream: tokio::net::TcpStream,
     addr: std::net::SocketAddr,
     app: axum::Router,
@@ -247,14 +246,14 @@ async fn handle_connection(
         }
     };
 
-    let resolver = Arc::new(crate::signer::FixedCertResolver::new(certified_key));
+    let resolver = std::sync::Arc::new(crate::signer::FixedCertResolver::new(certified_key));
     let mut server_config =
         rustls::ServerConfig::builder_with_protocol_versions(tls_params.protocol_versions())
             .with_no_client_auth()
             .with_cert_resolver(resolver);
     server_config.alpn_protocols = tls_params.alpn_protocols.clone();
 
-    let tls_stream = match start.into_stream(Arc::new(server_config)).await {
+    let tls_stream = match start.into_stream(std::sync::Arc::new(server_config)).await {
         Ok(s) => s,
         Err(e) => {
             tracing::debug!(addr = %addr, error = %e, "TLS handshake failed");
@@ -300,11 +299,9 @@ async fn check_existing_proxy(force: bool) -> anyhow::Result<()> {
 }
 
 fn generate_self_signed_cert() -> anyhow::Result<(rustls::sign::CertifiedKey, String)> {
-    use rcgen::{CertificateParams, KeyPair};
+    let key_pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
 
-    let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-
-    let mut params = CertificateParams::new(vec!["trustless".to_owned()])?;
+    let mut params = rcgen::CertificateParams::new(vec!["trustless".to_owned()])?;
     params.distinguished_name.push(
         rcgen::DnType::CommonName,
         rcgen::DnValue::Utf8String("trustless".to_owned()),
