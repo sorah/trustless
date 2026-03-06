@@ -316,7 +316,7 @@ fn generate_self_signed_cert() -> anyhow::Result<(rustls::sign::CertifiedKey, St
     let cert_der = rustls_pki_types::CertificateDer::from(cert.der().to_vec());
     let key_der = rustls_pki_types::PrivateKeyDer::try_from(key_pair.serialize_der())
         .map_err(|e| anyhow::anyhow!("failed to parse private key DER: {e}"))?;
-    let signing_key = rustls::crypto::ring::sign::any_ecdsa_type(&key_der)?;
+    let signing_key = rustls::crypto::aws_lc_rs::sign::any_ecdsa_type(&key_der)?;
 
     let certified_key = rustls::sign::CertifiedKey::new(vec![cert_der], signing_key);
 

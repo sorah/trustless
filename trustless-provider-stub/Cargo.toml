@@ -8,7 +8,7 @@ license = "Apache-2.0"
 trustless-protocol = { path = "../trustless-protocol" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "logging", "tls12"] }
 rustls-pki-types = { version = "1", features = ["std"] }
 x509-parser = "0.16"
 tokio = { version = "1", features = ["full"] }

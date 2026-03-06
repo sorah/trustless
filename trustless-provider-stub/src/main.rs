@@ -39,7 +39,7 @@ impl Certificate {
 
         let key_der = rustls_pki_types::PrivateKeyDer::from_pem_slice(key_pem)
             .map_err(|e| anyhow::anyhow!("failed to parse key PEM: {e}"))?;
-        let signing_key = rustls::crypto::ring::sign::any_supported_type(&key_der)
+        let signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&key_der)
             .map_err(|e| anyhow::anyhow!("failed to parse signing key: {e}"))?;
 
         let all_schemes = &[

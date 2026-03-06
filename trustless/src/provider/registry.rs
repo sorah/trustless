@@ -470,7 +470,7 @@ mod tests {
         let cert_der = rustls_pki_types::CertificateDer::from(key_pair.cert.der().to_vec());
         let key_der =
             rustls_pki_types::PrivateKeyDer::try_from(key_pair.key_pair.serialize_der()).unwrap();
-        let signing_key = rustls::crypto::ring::sign::any_ecdsa_type(&key_der).unwrap();
+        let signing_key = rustls::crypto::aws_lc_rs::sign::any_ecdsa_type(&key_der).unwrap();
         let certified_key =
             std::sync::Arc::new(rustls::sign::CertifiedKey::new(vec![cert_der], signing_key));
 
@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn register_control_cert_overwrites() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let registry = ProviderRegistry::new();
 
         let make_cert = |domain: &str| {
@@ -495,7 +495,7 @@ mod tests {
             let key_der =
                 rustls_pki_types::PrivateKeyDer::try_from(key_pair.key_pair.serialize_der())
                     .unwrap();
-            let signing_key = rustls::crypto::ring::sign::any_ecdsa_type(&key_der).unwrap();
+            let signing_key = rustls::crypto::aws_lc_rs::sign::any_ecdsa_type(&key_der).unwrap();
             std::sync::Arc::new(rustls::sign::CertifiedKey::new(vec![cert_der], signing_key))
         };
 
@@ -590,7 +590,7 @@ mod tests {
 
     #[test]
     fn replace_provider_swaps_atomically() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let registry = ProviderRegistry::new();
 
         // Create a mock signing handle

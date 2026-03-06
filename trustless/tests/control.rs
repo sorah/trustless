@@ -15,7 +15,7 @@ fn generate_test_cert() -> (
     let cert_pem = cert.pem();
     let cert_der = rustls_pki_types::CertificateDer::from(cert.der().to_vec());
     let key_der = rustls_pki_types::PrivateKeyDer::try_from(key_pair.serialize_der()).unwrap();
-    let signing_key = rustls::crypto::ring::sign::any_ecdsa_type(&key_der).unwrap();
+    let signing_key = rustls::crypto::aws_lc_rs::sign::any_ecdsa_type(&key_der).unwrap();
     let certified_key = Arc::new(rustls::sign::CertifiedKey::new(
         vec![cert_der.clone()],
         signing_key,
@@ -89,7 +89,7 @@ fn start_test_server(
 /// Start a proxy in-process, connect with Client, ping, stop, verify shutdown signal.
 #[tokio::test]
 async fn proxy_lifecycle_in_process() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let (certified_key, _cert_der, cert_pem) = generate_test_cert();
     let (server_handle, port, shutdown_rx) = start_test_server(certified_key);
@@ -121,7 +121,7 @@ async fn proxy_lifecycle_in_process() {
 /// Verify TLS handshake with the self-signed cert for SNI=trustless
 #[tokio::test]
 async fn tls_handshake_with_control_cert() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let (certified_key, cert_der, _cert_pem) = generate_test_cert();
 

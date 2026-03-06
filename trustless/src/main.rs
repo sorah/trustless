@@ -20,7 +20,7 @@ enum Cli {
 }
 
 fn main() -> Result<std::process::ExitCode, anyhow::Error> {
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let cli = <Cli as clap::Parser>::parse();
 
     if let Cli::Proxy(_) = &cli
