@@ -42,6 +42,7 @@ async fn ping() -> axum::Json<super::OkResponse> {
 async fn stop(
     axum::extract::State(state): axum::extract::State<ServerState>,
 ) -> axum::Json<super::OkResponse> {
+    tracing::info!("stop requested via control API");
     if let Some(tx) = state.shutdown_tx.lock().unwrap().take() {
         let _ = tx.send(());
     }
@@ -77,6 +78,7 @@ async fn reload(
             }
         }
     }
+    tracing::info!(ok = all_ok, "reload completed via control API");
     axum::Json(super::ReloadResponse {
         ok: all_ok,
         results: per_provider,

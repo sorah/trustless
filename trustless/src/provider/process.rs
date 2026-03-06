@@ -22,6 +22,9 @@ impl ProviderProcess {
         let stdin = child.stdin.take().expect("stdin is piped");
         let stderr = child.stderr.take().expect("stderr is piped");
 
+        let pid = child.id();
+        tracing::debug!(command = %command[0], pid = ?pid, "provider process spawned");
+
         let client = ProviderClient::new(stdout, stdin);
 
         Ok(Self {

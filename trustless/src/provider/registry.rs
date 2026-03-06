@@ -112,6 +112,7 @@ impl ProviderRegistry {
         handle: SigningHandle,
     ) -> Result<(), crate::Error> {
         let (certificates, default_id) = parse_init_result(&init, &handle)?;
+        let certificate_count = certificates.len();
 
         let mut inner = self.inner.write().unwrap();
         match inner.providers.get_mut(name) {
@@ -134,6 +135,8 @@ impl ProviderRegistry {
                 );
             }
         }
+
+        tracing::info!(provider = %name, certificate_count = certificate_count, "provider certificates registered");
 
         Ok(())
     }

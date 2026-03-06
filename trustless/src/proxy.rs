@@ -266,6 +266,7 @@ async fn handle_request(
     let upstream_response = match request_builder.send().await {
         Ok(resp) => resp,
         Err(e) => {
+            tracing::error!(backend = %backend, error = %e, "failed to send request to backend");
             return Err(ProxyError::BackendConnect {
                 backend,
                 source: Box::new(e),

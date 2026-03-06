@@ -153,6 +153,7 @@ impl RouteTable {
             let file: RoutesFile = serde_json::from_slice(&data)?;
             inner.cached_routes = file.routes;
             inner.cached_mtime = current_mtime;
+            tracing::debug!("route table reloaded from disk");
         }
 
         Ok(inner.cached_routes.get(host).copied())

@@ -72,19 +72,26 @@ impl SigningHandle {
             response_tx,
         };
         self.tx.send(req).map_err(|_| {
+            tracing::error!(certificate_id = %certificate_id, "signing worker gone, cannot sign");
             rustls::Error::General("remote sign failed: signing worker gone".to_owned())
         })?;
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
                 match tokio::time::timeout(self.timeout, response_rx).await {
                     Ok(Ok(result)) => result,
-                    Ok(Err(_)) => Err(rustls::Error::General(
-                        "remote sign failed: signing worker gone".to_owned(),
-                    )),
-                    Err(_) => Err(rustls::Error::General(format!(
-                        "remote sign failed: timed out after {}s",
-                        self.timeout.as_secs(),
-                    ))),
+                    Ok(Err(_)) => {
+                        tracing::error!(certificate_id = %certificate_id, "signing worker gone, cannot sign");
+                        Err(rustls::Error::General(
+                            "remote sign failed: signing worker gone".to_owned(),
+                        ))
+                    }
+                    Err(_) => {
+                        tracing::warn!(certificate_id = %certificate_id, timeout_secs = self.timeout.as_secs(), "remote sign timed out");
+                        Err(rustls::Error::General(format!(
+                            "remote sign failed: timed out after {}s",
+                            self.timeout.as_secs(),
+                        )))
+                    }
                 }
             })
         })

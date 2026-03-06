@@ -66,6 +66,7 @@ impl ProviderOrchestrator {
 
     /// Kill the current provider process and restart it, bypassing backoff.
     pub async fn restart_provider(&self, name: &str) -> Result<(), crate::Error> {
+        tracing::info!(provider = %name, "restarting provider");
         let command_tx = {
             let supervisors = self.inner.supervisors.lock().unwrap();
             let handle = supervisors
@@ -102,6 +103,7 @@ impl ProviderOrchestrator {
 
     /// Shutdown all providers. Sends SIGTERM, waits up to 20s, then SIGKILL.
     pub async fn shutdown(&self) {
+        tracing::info!("shutting down all providers");
         self.inner.cancel.cancel();
 
         let tasks: Vec<_> = {
@@ -112,6 +114,7 @@ impl ProviderOrchestrator {
         for task in tasks {
             let _ = task.await;
         }
+        tracing::debug!("all provider supervisors stopped");
     }
 }
 

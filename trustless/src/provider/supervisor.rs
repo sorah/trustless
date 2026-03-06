@@ -77,6 +77,7 @@ impl Supervisor {
         &mut self,
         reply: tokio::sync::oneshot::Sender<Result<(), crate::Error>>,
     ) {
+        tracing::debug!(provider = %self.name, "received restart command");
         let _ = self.child.kill().await;
         let _ = self.child.wait().await;
         let _ = (&mut self.stderr_task).await;
@@ -99,6 +100,7 @@ impl Supervisor {
     }
 
     async fn handle_shutdown(&mut self) {
+        tracing::debug!(provider = %self.name, "shutting down provider");
         #[cfg(unix)]
         {
             if let Some(pid) = self.child.id() {
@@ -166,6 +168,7 @@ impl Supervisor {
                     tracing::error!(provider = %self.name, "respawn failed: {e}");
                     self.record_init_failure(&format!("respawn failed: {e}"));
                     self.backoff = next_backoff(self.backoff);
+                    tracing::debug!(provider = %self.name, next_delay = ?self.backoff, "increasing backoff");
                 }
             }
         }
@@ -176,6 +179,7 @@ impl Supervisor {
         self.stderr_task = result.stderr_task;
         self.stderr_lines = result.stderr_lines;
         self.healthy_since = Some(std::time::Instant::now());
+        tracing::info!(provider = %self.name, "provider respawned successfully");
     }
 
     fn record_init_failure(&self, message: &str) {
