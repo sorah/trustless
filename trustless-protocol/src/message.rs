@@ -1,69 +1,103 @@
+/// A protocol request message containing a monotonic `id` and a method-specific body.
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct Request {
+    /// Monotonically increasing request identifier. Responses must echo this value.
     pub id: u64,
     #[serde(flatten)]
     pub body: RequestBody,
 }
 
+/// Tagged enum representing the method and parameters of a request.
+///
+/// Serialized as `{"method": "...", "params": {...}}` via serde's `tag`/`content` attributes.
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 #[serde(tag = "method", content = "params")]
 pub enum RequestBody {
+    /// Request the provider to return all available certificates.
     #[serde(rename = "initialize")]
     Initialize(InitializeParams),
+    /// Request the provider to sign a blob with a specific certificate and scheme.
     #[serde(rename = "sign")]
     Sign(SignParams),
 }
 
+/// Parameters for the `initialize` method. Currently empty.
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct InitializeParams {}
 
+/// Parameters for the `sign` method.
 #[serde_with::serde_as]
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct SignParams {
+    /// The certificate ID (from [`InitializeResult`]) identifying which key to use.
     pub certificate_id: String,
+    /// The signature scheme name (e.g., `"ECDSA_NISTP256_SHA256"`).
     pub scheme: String,
+    /// The data to sign. Base64-encoded on the wire.
     #[serde_as(as = "serde_with::base64::Base64")]
     pub blob: Vec<u8>,
 }
 
+/// A protocol response message containing the echoed `id` and either a result or error.
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct RawResponse<R> {
+    /// The request `id` this response corresponds to.
     pub id: u64,
     #[serde(flatten)]
     pub body: RawResponseBody<R>,
 }
 
+/// Untagged enum: either a successful result or an error payload.
+///
+/// Uses serde's `untagged` representation — the presence of `"result"` vs `"error"` key
+/// determines which variant is deserialized.
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 #[serde(untagged)]
 pub enum RawResponseBody<R> {
+    /// Successful response containing the method-specific result.
     Result { result: R },
+    /// Error response.
     Error { error: ErrorPayload },
 }
 
+/// An error payload with a numeric code and human-readable message.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct ErrorPayload {
+    /// Error code. Conventional values: 1 = cert not found, 2 = unsupported scheme, 3 = signing failed.
     pub code: i64,
+    /// Human-readable error description.
     pub message: String,
 }
 
+/// Result of the `initialize` method.
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct InitializeResult {
+    /// Certificate ID to use as the default when no SNI matches.
     pub default: String,
+    /// All certificates available from this provider.
     pub certificates: Vec<CertificateInfo>,
 }
 
+/// Metadata for a single certificate returned during initialization.
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct CertificateInfo {
+    /// Unique identifier for this certificate. Used in `sign` requests.
     pub id: String,
+    /// DNS Subject Alternative Names the certificate covers (e.g., `["*.example.com"]`).
     pub domains: Vec<String>,
+    /// Full certificate chain in PEM format (leaf first, then intermediates).
     pub pem: String,
+    /// Supported signature scheme names (e.g., `["ECDSA_NISTP256_SHA256"]`).
+    /// Strongly recommended — certificates without valid schemes are skipped.
     #[serde(default)]
     pub schemes: Vec<String>,
 }
 
+/// Result of the `sign` method.
 #[serde_with::serde_as]
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct SignResult {
+    /// The signature bytes. Base64-encoded on the wire.
     #[serde_as(as = "serde_with::base64::Base64")]
     pub signature: Vec<u8>,
 }

@@ -1,3 +1,6 @@
+/// Parse a signature scheme name string (e.g., `"ECDSA_NISTP256_SHA256"`) into a rustls `SignatureScheme`.
+///
+/// Returns `None` for unrecognized names.
 pub fn parse_scheme(name: &str) -> Option<rustls::SignatureScheme> {
     match name {
         "RSA_PKCS1_SHA256" => Some(rustls::SignatureScheme::RSA_PKCS1_SHA256),
@@ -15,6 +18,9 @@ pub fn parse_scheme(name: &str) -> Option<rustls::SignatureScheme> {
     }
 }
 
+/// Convert a rustls `SignatureScheme` to its canonical string name.
+///
+/// Returns `"UNKNOWN"` for unrecognized schemes.
 pub fn scheme_to_string(scheme: rustls::SignatureScheme) -> &'static str {
     match scheme {
         rustls::SignatureScheme::RSA_PKCS1_SHA256 => "RSA_PKCS1_SHA256",
@@ -49,6 +55,10 @@ fn algorithm_for_scheme(scheme: rustls::SignatureScheme) -> rustls::SignatureAlg
     }
 }
 
+/// Determine the common `SignatureAlgorithm` for a list of schemes.
+///
+/// Returns `None` if the list is empty or contains schemes from mixed algorithm families
+/// (e.g., both RSA and ECDSA).
 pub fn algorithm_for_schemes(
     schemes: &[rustls::SignatureScheme],
 ) -> Option<rustls::SignatureAlgorithm> {

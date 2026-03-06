@@ -1,15 +1,18 @@
+/// Wrap an `AsyncRead` with length-delimited codec framing for reading protocol messages.
 pub fn framed_read<R: tokio::io::AsyncRead>(
     reader: R,
 ) -> tokio_util::codec::FramedRead<R, tokio_util::codec::LengthDelimitedCodec> {
     tokio_util::codec::FramedRead::new(reader, tokio_util::codec::LengthDelimitedCodec::new())
 }
 
+/// Wrap an `AsyncWrite` with length-delimited codec framing for writing protocol messages.
 pub fn framed_write<W: tokio::io::AsyncWrite>(
     writer: W,
 ) -> tokio_util::codec::FramedWrite<W, tokio_util::codec::LengthDelimitedCodec> {
     tokio_util::codec::FramedWrite::new(writer, tokio_util::codec::LengthDelimitedCodec::new())
 }
 
+/// Serialize a message as JSON and send it over a framed writer.
 pub async fn send_message<W>(
     writer: &mut tokio_util::codec::FramedWrite<W, tokio_util::codec::LengthDelimitedCodec>,
     msg: &impl serde::Serialize,
@@ -24,6 +27,9 @@ where
     Ok(())
 }
 
+/// Read and deserialize a JSON message from a framed reader.
+///
+/// Returns [`Error::ProcessExited`](crate::error::Error::ProcessExited) when the stream reaches EOF.
 pub async fn recv_message<R, M>(
     reader: &mut tokio_util::codec::FramedRead<R, tokio_util::codec::LengthDelimitedCodec>,
 ) -> Result<M, crate::error::Error>

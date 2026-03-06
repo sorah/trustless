@@ -1,3 +1,7 @@
+/// Async client for communicating with a key provider process.
+///
+/// Thread-safe via an interior `Mutex` — multiple tasks can share a single client,
+/// but requests are serialized (one at a time on the wire).
 pub struct ProviderClient<R, W> {
     inner: tokio::sync::Mutex<ProviderClientInner<R, W>>,
 }
@@ -13,6 +17,7 @@ where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
     W: tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
+    /// Create a new client from an `AsyncRead` (provider's stdout) and `AsyncWrite` (provider's stdin).
     pub fn new(reader: R, writer: W) -> Self {
         let reader = crate::codec::framed_read(reader);
         let writer = crate::codec::framed_write(writer);
@@ -26,6 +31,7 @@ where
         }
     }
 
+    /// Send an `initialize` request and return the provider's certificates.
     pub async fn initialize(
         &self,
     ) -> Result<crate::message::InitializeResult, crate::error::Error> {
@@ -35,6 +41,7 @@ where
         .await
     }
 
+    /// Send a `sign` request and return the raw signature bytes.
     pub async fn sign(
         &self,
         certificate_id: &str,
