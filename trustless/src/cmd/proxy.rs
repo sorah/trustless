@@ -6,6 +6,8 @@ pub enum ProxyCommand {
     Start(ProxyStartArgs),
     /// Stop the running proxy server
     Stop(ProxyStopArgs),
+    /// Reload all providers
+    Reload(ProxyReloadArgs),
 }
 
 #[derive(clap::Args)]
@@ -34,10 +36,14 @@ pub struct ProxyStartArgs {
 #[derive(clap::Args)]
 pub struct ProxyStopArgs {}
 
+#[derive(clap::Args)]
+pub struct ProxyReloadArgs {}
+
 pub fn run(cmd: &ProxyCommand) -> anyhow::Result<()> {
     match cmd {
         ProxyCommand::Start(args) => run_start(args),
         ProxyCommand::Stop(args) => run_stop(args),
+        ProxyCommand::Reload(args) => run_reload(args),
     }
 }
 
@@ -84,7 +90,7 @@ async fn run_start_async(args: &ProxyStartArgs) -> anyhow::Result<()> {
     // Build TLS params (per-connection config built during LazyConfigAcceptor)
     let tls12 = args.tls12 || config.tls12;
     let tls_params = TlsParams {
-        registry,
+        registry: registry.clone(),
         tls12,
         alpn_protocols: vec![b"h2".to_vec(), b"http/1.1".to_vec()],
     };
@@ -106,14 +112,20 @@ async fn run_start_async(args: &ProxyStartArgs) -> anyhow::Result<()> {
     // Route table and proxy router
     let route_table = crate::route::RouteTable::new(crate::config::state_dir());
     let proxy_state = crate::proxy::ProxyState {
-        route_table,
+        route_table: route_table.clone(),
         client: reqwest::Client::new(),
     };
     let proxy_app = crate::proxy::proxy_router(proxy_state);
 
     // Shutdown signal
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let server_state = crate::control::server::ServerState::new(shutdown_tx);
+    let server_state = crate::control::server::ServerState::new(
+        shutdown_tx,
+        orchestrator.clone(),
+        registry.clone(),
+        route_table,
+        local_addr.port(),
+    );
     let app = crate::control::server::dispatch_router(server_state, proxy_app);
 
     // Serve
@@ -425,5 +437,29 @@ async fn run_stop(_args: &ProxyStopArgs) -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("no proxy is running (proxy.json not found or invalid)"))?;
     client.stop().await?;
     eprintln!("trustless: proxy stop requested");
+    Ok(())
+}
+
+#[tokio::main]
+async fn run_reload(_args: &ProxyReloadArgs) -> anyhow::Result<()> {
+    let client = crate::control::Client::from_state()
+        .map_err(|_| anyhow::anyhow!("no proxy is running (proxy.json not found or invalid)"))?;
+    let result = client.reload().await?;
+
+    for (name, status) in &result.results {
+        if status.ok {
+            eprintln!("  {name}: ok");
+        } else {
+            let err = status.error.as_deref().unwrap_or("unknown error");
+            eprintln!("  {name}: error: {err}");
+        }
+    }
+
+    if result.ok {
+        eprintln!("trustless: all providers reloaded");
+    } else {
+        anyhow::bail!("some providers failed to reload");
+    }
+
     Ok(())
 }

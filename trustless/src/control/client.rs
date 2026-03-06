@@ -54,6 +54,28 @@ impl Client {
         Ok(())
     }
 
+    pub async fn status(&self) -> Result<super::StatusResponse, crate::Error> {
+        let resp = self.inner.get("https://trustless/status").send().await?;
+        if !resp.status().is_success() {
+            return Err(crate::Error::Control(format!(
+                "status failed: HTTP {}",
+                resp.status()
+            )));
+        }
+        Ok(resp.json::<super::StatusResponse>().await?)
+    }
+
+    pub async fn reload(&self) -> Result<super::ReloadResponse, crate::Error> {
+        let resp = self.inner.post("https://trustless/reload").send().await?;
+        if !resp.status().is_success() {
+            return Err(crate::Error::Control(format!(
+                "reload failed: HTTP {}",
+                resp.status()
+            )));
+        }
+        Ok(resp.json::<super::ReloadResponse>().await?)
+    }
+
     /// Request graceful shutdown. Fire-and-forget.
     pub async fn stop(&self) -> Result<(), crate::Error> {
         let resp = self.inner.post("https://trustless/stop").send().await?;

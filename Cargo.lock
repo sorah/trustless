@@ -2217,6 +2217,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "trustless-protocol",
+ "x509-parser",
 ]
 
 [[package]]

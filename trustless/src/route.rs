@@ -109,6 +109,32 @@ impl RouteTable {
         state_dir.join("routes.json")
     }
 
+    pub fn list_routes(
+        &self,
+    ) -> Result<std::collections::HashMap<String, std::net::SocketAddr>, RouteError> {
+        let mut inner = self.inner.lock();
+        let path = Self::routes_path(&inner.state_dir);
+
+        let current_mtime = match std::fs::metadata(&path) {
+            Ok(meta) => Some(meta.modified()?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                inner.cached_routes.clear();
+                inner.cached_mtime = None;
+                return Ok(std::collections::HashMap::new());
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        if inner.cached_mtime != current_mtime {
+            let data = std::fs::read(&path)?;
+            let file: RoutesFile = serde_json::from_slice(&data)?;
+            inner.cached_routes = file.routes;
+            inner.cached_mtime = current_mtime;
+        }
+
+        Ok(inner.cached_routes.clone())
+    }
+
     pub fn resolve(&self, host: &str) -> Result<Option<std::net::SocketAddr>, RouteError> {
         let host = strip_port(host);
         let mut inner = self.inner.lock();

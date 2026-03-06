@@ -27,6 +27,9 @@ struct ProviderEntry {
 struct CertResolverEntry {
     id: String,
     domains: Vec<String>,
+    issuer: String,
+    serial: String,
+    not_after: String,
     certified_key: std::sync::Arc<rustls::sign::CertifiedKey>,
 }
 
@@ -35,6 +38,9 @@ impl std::fmt::Debug for CertResolverEntry {
         f.debug_struct("CertResolverEntry")
             .field("id", &self.id)
             .field("domains", &self.domains)
+            .field("issuer", &self.issuer)
+            .field("serial", &self.serial)
+            .field("not_after", &self.not_after)
             .finish_non_exhaustive()
     }
 }
@@ -181,6 +187,35 @@ impl ProviderRegistry {
         });
     }
 
+    pub fn list_providers(&self) -> Vec<super::ProviderStatusInfo> {
+        let inner = self.inner.read().unwrap();
+        inner
+            .providers
+            .iter()
+            .map(|(name, entry)| super::ProviderStatusInfo {
+                name: name.clone(),
+                state: entry.state.clone(),
+                certificates: entry
+                    .certificates
+                    .iter()
+                    .map(|c| super::CertificateStatusInfo {
+                        id: c.id.clone(),
+                        domains: c.domains.clone(),
+                        issuer: c.issuer.clone(),
+                        serial: c.serial.clone(),
+                        not_after: c.not_after.clone(),
+                    })
+                    .collect(),
+                errors: entry.errors.iter().cloned().collect(),
+            })
+            .collect()
+    }
+
+    pub fn provider_names(&self) -> Vec<String> {
+        let inner = self.inner.read().unwrap();
+        inner.providers.keys().cloned().collect()
+    }
+
     pub fn resolve_by_sni(
         &self,
         sni: Option<&str>,
@@ -293,6 +328,8 @@ fn parse_init_result(
             RemoteSigningKey::new(handle.clone(), cert_info.id.clone(), algorithm, schemes),
         );
 
+        let (issuer, serial, not_after) = parse_leaf_cert_metadata(&cert_chain[0]);
+
         let certified_key =
             std::sync::Arc::new(rustls::sign::CertifiedKey::new(cert_chain, signing_key));
 
@@ -303,6 +340,9 @@ fn parse_init_result(
                 .iter()
                 .map(|d| d.to_ascii_lowercase())
                 .collect(),
+            issuer,
+            serial,
+            not_after,
             certified_key,
         });
     }
@@ -318,6 +358,30 @@ fn parse_init_result(
     };
 
     Ok((certificates, default_id))
+}
+
+fn parse_leaf_cert_metadata(
+    leaf_der: &rustls_pki_types::CertificateDer<'_>,
+) -> (String, String, String) {
+    let unknown = "(unknown)".to_owned();
+    match x509_parser::parse_x509_certificate(leaf_der.as_ref()) {
+        Ok((_, cert)) => {
+            let issuer = cert.issuer().to_string();
+            let serial = cert
+                .raw_serial()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<Vec<_>>()
+                .join(":");
+            let not_after = cert
+                .validity()
+                .not_after
+                .to_rfc2822()
+                .unwrap_or_else(|_| unknown.clone());
+            (issuer, serial, not_after)
+        }
+        Err(_) => (unknown.clone(), unknown.clone(), unknown),
+    }
 }
 
 fn matches_sni(sni: &str, domains: &[String]) -> bool {

@@ -11,6 +11,8 @@ enum Cli {
         #[command(subcommand)]
         command: trustless::cmd::route::RouteCommand,
     },
+    /// Show proxy status
+    Status(trustless::cmd::status::StatusArgs),
 }
 
 fn main() -> Result<std::process::ExitCode, anyhow::Error> {
@@ -36,14 +38,19 @@ fn main() -> Result<std::process::ExitCode, anyhow::Error> {
             }
         }
         Cli::Proxy(trustless::cmd::proxy::ProxyCommand::Stop(_)) => enable_log(LogType::Custom),
+        Cli::Proxy(trustless::cmd::proxy::ProxyCommand::Reload(_)) => {
+            enable_log(LogType::Custom);
+        }
         Cli::Setup(_) => enable_log(LogType::Custom),
         Cli::Route { .. } => enable_log(LogType::Custom),
+        Cli::Status(_) => enable_log(LogType::Custom),
     }
 
     let retval = match cli {
         Cli::Setup(args) => trustless::cmd::setup::run(&args),
         Cli::Proxy(cmd) => trustless::cmd::proxy::run(&cmd),
         Cli::Route { command } => trustless::cmd::route::run(&command),
+        Cli::Status(args) => trustless::cmd::status::run(&args),
     };
     match retval {
         Ok(_) => Ok(std::process::ExitCode::SUCCESS),

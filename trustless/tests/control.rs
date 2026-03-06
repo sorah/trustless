@@ -42,7 +42,16 @@ fn start_test_server(
     let listener = tokio::net::TcpListener::from_std(listener).unwrap();
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let server_state = trustless::control::server::ServerState::new(shutdown_tx);
+    let registry = trustless::provider::ProviderRegistry::new();
+    let orchestrator = trustless::provider::ProviderOrchestrator::new(registry.clone());
+    let route_table = trustless::route::RouteTable::new(std::env::temp_dir());
+    let server_state = trustless::control::server::ServerState::new(
+        shutdown_tx,
+        orchestrator,
+        registry,
+        route_table,
+        port,
+    );
     let stub_proxy = axum::Router::new()
         .fallback(|| async { (axum::http::StatusCode::BAD_GATEWAY, "no backend") });
     let app = trustless::control::server::dispatch_router(server_state, stub_proxy);

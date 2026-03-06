@@ -85,6 +85,21 @@ impl ProviderOrchestrator {
             .map_err(|_| crate::Error::ProviderSupervisorGone(name.to_owned()))?
     }
 
+    /// Restart all providers. Returns per-provider results.
+    pub async fn restart_all(&self) -> Vec<(String, Result<(), crate::Error>)> {
+        let names = {
+            let supervisors = self.inner.supervisors.lock().unwrap();
+            supervisors.keys().cloned().collect::<Vec<_>>()
+        };
+
+        let mut results = Vec::new();
+        for name in names {
+            let result = self.restart_provider(&name).await;
+            results.push((name, result));
+        }
+        results
+    }
+
     /// Shutdown all providers. Sends SIGTERM, waits up to 20s, then SIGKILL.
     pub async fn shutdown(&self) {
         self.inner.cancel.cancel();
