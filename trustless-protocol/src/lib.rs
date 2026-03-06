@@ -26,3 +26,9 @@ pub mod handler;
 pub mod message;
 /// Signature scheme name parsing and algorithm mapping.
 pub mod scheme;
+
+/// Shared helpers for key provider implementations (cert loading, SAN extraction, signing).
+///
+/// Gated behind the `provider-helpers` feature flag.
+#[cfg(feature = "provider-helpers")]
+pub mod provider_helpers;

@@ -46,7 +46,7 @@ For each prefix (`{prefix}`):
 2. Fetch `{prefix}{cert-id}/fullchain.pem` to get the certificate chain in PEM format
    - Fall back to `{prefix}{cert-id}/cert.pem` if `fullchain.pem` is not found (S3 NoSuchKey)
 3. Fetch `{prefix}{cert-id}/key.pem` to get the private key in PEM format
-   - If `TRUSTLESS_KEY_PASSPHRASE_SSM_ARN` is set and the key is PKCS#8 encrypted (`-----BEGIN ENCRYPTED PRIVATE KEY-----`), decrypt it using the passphrase from SSM Parameter Store
+   - If `TRUSTLESS_KEY_PASSPHRASE_SSM_ARN` is set and the key is encrypted, decrypt it using the passphrase from SSM Parameter Store. Supported encrypted formats: PKCS#8 encrypted (`-----BEGIN ENCRYPTED PRIVATE KEY-----`) and legacy OpenSSL PEM encryption (`Proc-Type: 4,ENCRYPTED` with AES-128/192/256-CBC)
 
 The function only requires `s3:GetObject` permission on the relevant objects.
 
@@ -94,7 +94,7 @@ Variables:
 
 - `function_name` (required): Lambda function name
 - `source_url` (required): URL to download the Lambda function zip package (downloaded via the `http` Terraform data source)
-- `source_sha512` (optional): SHA-512 checksum of the zip file. When provided, validated using the `http` data source's postcondition
+- `source_sha512` (optional): SHA-512 checksum of the zip file's base64-encoded representation (i.e., `sha512(base64encode(file))`). When provided, validated using the `http` data source's postcondition against `response_body_base64`. This is a Terraform limitation — `sha512()` only operates on strings, not raw bytes
 - `iam_role_arn` (required): IAM role ARN for the Lambda function. The role must have permissions for `s3:GetObject` on the relevant S3 objects, `ssm:GetParameter` on the passphrase parameter (if applicable), and Lambda basic execution (CloudWatch Logs)
 - `method` (required): Key material source method (`"s3"`)
 - `s3` (required when method is `"s3"`): Object with `urls` list of S3 URL prefixes
@@ -140,25 +140,26 @@ Outputs:
 
 Deliverables:
 
-- `Cargo.toml` (workspace root): add `trustless-provider-lambda` to `members`; add `trustless-provider-lambda-function` to `exclude` (or use a separate workspace config)
-- `trustless-protocol/Cargo.toml`: add `provider-helpers` feature flag with dependencies (`rustls-pki-types`, `x509-parser`, `aws-lc-rs` via rustls)
+- `Cargo.toml` (workspace root): add `trustless-provider-lambda` and `trustless-provider-lambda-function` to `members`
+- `trustless-protocol/Cargo.toml`: add `provider-helpers` feature flag with dependencies (`rustls-pki-types`, `x509-parser`, `aws-lc-rs` via rustls); add `encrypted-key` feature flag with dependencies (`pkcs8`, `aes`, `cbc`, `cipher`, `md-5`, `base64ct`) for encrypted private key decryption
 - `trustless-protocol/src/provider_helpers.rs` (or similar): shared cert loading, SAN extraction, scheme detection, and signing helpers with `thiserror`-based error type
 - `trustless-provider-stub/Cargo.toml`: update to use `trustless-protocol/provider-helpers` feature
 - `trustless-provider-stub/src/main.rs`: refactor to use shared helpers from `trustless-protocol`
 - `trustless-provider-lambda/Cargo.toml`: new crate with `clap`, `tokio`, `aws-sdk-lambda`, `trustless-protocol`
 - `trustless-provider-lambda/src/main.rs`: provider command implementation
-- `trustless-provider-lambda-function/Cargo.toml`: new crate with `lambda_runtime`, `aws-sdk-s3`, `aws-sdk-ssm`, `trustless-protocol` (with `provider-helpers`), `pkcs8`, `secrecy`, `tracing`, `rustls`
+- `trustless-provider-lambda-function/Cargo.toml`: new crate with `lambda_runtime`, `aws-sdk-s3`, `aws-sdk-ssm`, `trustless-protocol` (with `provider-helpers` and `encrypted-key`), `secrecy`, `tracing`, `rustls-pki-types`
 - `trustless-provider-lambda-function/src/main.rs`: Lambda function implementation with S3 backend, in-memory cache, and signing
 - `trustless-provider-lambda-function/terraform/main.tf`: Terraform module for Lambda deployment
 - `trustless-provider-lambda-function/terraform/variables.tf`: module input variables
 - `trustless-provider-lambda-function/terraform/outputs.tf`: module outputs
+- `trustless-provider-lambda-function/terraform/versions.tf`: required Terraform and provider versions
 
 ## Implementation Plan
 
 ### Crate Structure
 
 - `//trustless-provider-lambda` — provider command binary crate. Implements the stdin/stdout key provider protocol, translating each request into a synchronous (`RequestResponse`) Lambda invocation via `aws-sdk-lambda`. Added to the workspace `members`.
-- `//trustless-provider-lambda-function` — AWS Lambda function binary crate. Handles `initialize` and `sign` requests using S3-backed key material. Initialized with `cargo lambda new`. **Excluded from workspace default members** (requires `cargo-lambda` to build). Built separately via `cargo lambda build`.
+- `//trustless-provider-lambda-function` — AWS Lambda function binary crate. Handles `initialize` and `sign` requests using S3-backed key material. Initialized with `cargo lambda new`. Added to workspace `members`. Built via `cargo lambda build`.
 - `//trustless-provider-lambda-function/terraform` — Terraform module to deploy the Lambda function. Uses `http` data source to download the zip, writes to a local file via `local_file` resource, and references it with `aws_lambda_function.filename`.
 
 ### Shared Code in trustless-protocol
@@ -186,9 +187,9 @@ The shared code is gated behind a `provider-helpers` feature flag in `trustless-
 
 - Use `cargo-lambda` for build tooling
 - Use `aws-sdk-s3`, `aws-sdk-ssm`, and the Rust Runtime for AWS Lambda (`lambda_runtime` crate)
-- Use `pkcs8` crate for PKCS#8 encrypted private key decryption
+- Encrypted key decryption (PKCS#8 and legacy OpenSSL) provided by `trustless-protocol`'s `encrypted-key` feature flag
 - Use `secrecy` crate for passphrase protection in memory
-- Use `rustls` (aws-lc-rs backend) for signing, same as `trustless-provider-stub`
+- Signing via `rustls` (aws-lc-rs backend) through `trustless-protocol`'s `provider-helpers` feature, same as `trustless-provider-stub`
 - Use `tracing` and `tracing-subscriber` for structured logging to CloudWatch (via stdout)
   - `info`: initialize/sign requests, cache state transitions
   - `debug`: cache hits, S3 fetch details
@@ -214,23 +215,34 @@ The first URL in `TRUSTLESS_S3_URLS` determines the default certificate in the `
 
 ## Current Status
 
-Interview complete.
+Validation complete. Implementation matches spec (after spec updates).
 
 ### Implementation Checklist
 
-- [ ] Extract shared provider helpers into `trustless-protocol` behind `provider-helpers` feature flag
-- [ ] Refactor `trustless-provider-stub` to use shared helpers
-- [ ] Create `trustless-provider-lambda` crate (provider command)
-- [ ] Create `trustless-provider-lambda-function` crate (Lambda function)
-- [ ] Implement S3 backend with caching, PKCS#8 decryption, signing
-- [ ] Implement Lambda function handler (initialize + sign)
-- [ ] Implement provider command (stdin/stdout protocol ↔ Lambda invocations)
-- [ ] Unit tests for Lambda function (aws-smithy-mocks)
+- [x] Extract shared provider helpers into `trustless-protocol` behind `provider-helpers` feature flag
+- [x] Refactor `trustless-provider-stub` to use shared helpers
+- [x] Create `trustless-provider-lambda` crate (provider command)
+- [x] Create `trustless-provider-lambda-function` crate (Lambda function)
+- [x] Implement S3 backend with caching, PKCS#8 decryption, signing
+- [x] Implement Lambda function handler (initialize + sign)
+- [x] Implement provider command (stdin/stdout protocol ↔ Lambda invocations)
+- [x] Unit tests for Lambda function (aws-smithy-mocks)
 - [ ] Unit tests for provider command
-- [ ] Unit tests for shared helpers
-- [ ] Create Terraform module (`main.tf`, `variables.tf`, `outputs.tf`)
-- [ ] Update workspace `Cargo.toml`
+- [x] Unit tests for shared helpers
+- [x] Create Terraform module (`main.tf`, `variables.tf`, `outputs.tf`)
+- [x] Update workspace `Cargo.toml`
+
+### Discrepancies
+
+- **Workspace membership: lambda-function in `members` instead of `exclude`** — Spec said exclude, impl uses members. Resolution: spec updated to match impl
+- **Encrypted key: legacy OpenSSL support beyond spec scope** — Impl adds legacy OpenSSL PEM encryption support beyond spec's PKCS#8-only scope, with `encrypted-key` feature flag. Resolution: spec updated to document additional support
+- **Terraform SHA-512 postcondition computes hash of base64 string, not raw bytes** — `sha512(self.response_body_base64)` hashes base64 text, not zip bytes. Terraform limitation. Resolution: spec updated to document this
+- **Extra `versions.tf` file** — Not listed in spec deliverables but present. Resolution: spec updated to include
+- **Lambda function Cargo.toml dependency differences vs spec** — Spec listed `rustls`/`pkcs8` as direct deps; impl uses them transitively via trustless-protocol features. Resolution: spec updated to match impl
 
 ### Updates
 
 Implementors MUST keep this section updated as they work.
+
+- 2026-03-07: Initial implementation complete. Provider command (`trustless-provider-lambda`) is a thin relay with no unit tests of its own (all logic delegates to AWS SDK). Lambda function has 13 tests covering cold/warm init, signing, fallback, and error cases. Encrypted key decryption test omitted (requires generating encrypted PKCS#8 test fixtures). Terraform module validated.
+- 2026-03-07: Validation complete. 5 discrepancies found, all resolved by updating spec to match implementation: workspace membership, encrypted key scope expansion, Terraform SHA-512 base64 limitation, versions.tf, and dependency organization

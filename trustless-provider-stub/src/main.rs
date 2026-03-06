@@ -1,81 +1,10 @@
-struct Certificate {
-    id: String,
-    domains: Vec<String>,
-    fullchain_pem: String,
-    signing_key: std::sync::Arc<dyn rustls::sign::SigningKey>,
-    schemes: Vec<rustls::SignatureScheme>,
-}
-
-fn dns_sans_from_pem(fullchain_pem: &str) -> anyhow::Result<Vec<String>> {
-    use rustls_pki_types::pem::PemObject as _;
-
-    let leaf_der = rustls_pki_types::CertificateDer::pem_slice_iter(fullchain_pem.as_bytes())
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("fullchain PEM is empty"))?
-        .map_err(|e| anyhow::anyhow!("failed to parse leaf cert PEM: {e}"))?;
-
-    let (_, cert) = x509_parser::parse_x509_certificate(&leaf_der)
-        .map_err(|e| anyhow::anyhow!("failed to parse leaf certificate: {e}"))?;
-
-    let mut dns_names = Vec::new();
-    if let Some(san) = cert
-        .subject_alternative_name()
-        .map_err(|e| anyhow::anyhow!("failed to parse SAN extension: {e}"))?
-    {
-        for name in &san.value.general_names {
-            if let x509_parser::extensions::GeneralName::DNSName(dns) = name {
-                dns_names.push((*dns).to_owned());
-            }
-        }
-    }
-    Ok(dns_names)
-}
-
-impl Certificate {
-    fn from_pem(id: String, fullchain_pem: String, key_pem: &[u8]) -> anyhow::Result<Self> {
-        use rustls_pki_types::pem::PemObject as _;
-
-        let domains = dns_sans_from_pem(&fullchain_pem)?;
-
-        let key_der = rustls_pki_types::PrivateKeyDer::from_pem_slice(key_pem)
-            .map_err(|e| anyhow::anyhow!("failed to parse key PEM: {e}"))?;
-        let signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&key_der)
-            .map_err(|e| anyhow::anyhow!("failed to parse signing key: {e}"))?;
-
-        let all_schemes = &[
-            rustls::SignatureScheme::RSA_PSS_SHA256,
-            rustls::SignatureScheme::RSA_PSS_SHA384,
-            rustls::SignatureScheme::RSA_PSS_SHA512,
-            rustls::SignatureScheme::RSA_PKCS1_SHA256,
-            rustls::SignatureScheme::RSA_PKCS1_SHA384,
-            rustls::SignatureScheme::RSA_PKCS1_SHA512,
-            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
-            rustls::SignatureScheme::ED25519,
-        ];
-        let schemes: Vec<rustls::SignatureScheme> = all_schemes
-            .iter()
-            .filter(|s| signing_key.choose_scheme(&[**s]).is_some())
-            .copied()
-            .collect();
-
-        Ok(Self {
-            id,
-            domains,
-            fullchain_pem,
-            signing_key,
-            schemes,
-        })
-    }
-}
-
 struct StubHandler {
     default: String,
-    certs: Vec<Certificate>,
+    certs: Vec<trustless_protocol::provider_helpers::Certificate>,
 }
 
 impl StubHandler {
-    fn load(cert_dir: &std::path::Path) -> anyhow::Result<Self> {
+    fn load(cert_dir: &std::path::Path, passphrase: Option<String>) -> anyhow::Result<Self> {
         let certs_dir = cert_dir.join("certs");
         let mut certs = Vec::new();
         let mut default = None;
@@ -115,7 +44,12 @@ impl StubHandler {
             let key_pem = std::fs::read(version_dir.join("key.pem"))?;
 
             let id = format!("{domain_name}/{version}");
-            let cert = Certificate::from_pem(id.clone(), fullchain_pem, &key_pem)?;
+            let cert = trustless_protocol::provider_helpers::Certificate::from_pem_with_passphrase(
+                id.clone(),
+                fullchain_pem,
+                &key_pem,
+                passphrase.as_deref(),
+            )?;
 
             if default.is_none() {
                 default = Some(id);
@@ -137,25 +71,12 @@ impl trustless_protocol::handler::Handler for StubHandler {
         trustless_protocol::message::InitializeResult,
         trustless_protocol::message::ErrorPayload,
     > {
-        let certificates = self
-            .certs
-            .iter()
-            .map(|c| trustless_protocol::message::CertificateInfo {
-                id: c.id.clone(),
-                domains: c.domains.clone(),
-                pem: c.fullchain_pem.clone(),
-                schemes: c
-                    .schemes
-                    .iter()
-                    .map(|s| trustless_protocol::scheme::scheme_to_string(*s).to_owned())
-                    .collect(),
-            })
-            .collect();
-
-        Ok(trustless_protocol::message::InitializeResult {
-            default: self.default.clone(),
-            certificates,
-        })
+        Ok(
+            trustless_protocol::provider_helpers::build_initialize_result(
+                &self.default,
+                &self.certs,
+            ),
+        )
     }
 
     async fn sign(
@@ -172,32 +93,7 @@ impl trustless_protocol::handler::Handler for StubHandler {
                 message: format!("certificate not found: {}", params.certificate_id),
             })?;
 
-        let requested_scheme = trustless_protocol::scheme::parse_scheme(&params.scheme)
-            .ok_or_else(|| trustless_protocol::message::ErrorPayload {
-                code: 2,
-                message: format!("unknown signature scheme: {}", params.scheme),
-            })?;
-
-        let signer = cert
-            .signing_key
-            .choose_scheme(&[requested_scheme])
-            .ok_or_else(|| trustless_protocol::message::ErrorPayload {
-                code: 2,
-                message: format!(
-                    "unsupported signature scheme for this certificate: {}",
-                    params.scheme,
-                ),
-            })?;
-
-        let signature =
-            signer
-                .sign(&params.blob)
-                .map_err(|e| trustless_protocol::message::ErrorPayload {
-                    code: 3,
-                    message: format!("signing failed: {e}"),
-                })?;
-
-        Ok(trustless_protocol::message::SignResult { signature })
+        cert.sign(&params).map_err(Into::into)
     }
 }
 
@@ -220,7 +116,8 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = Args::parse();
-    let handler = StubHandler::load(&args.cert_dir)?;
+    let passphrase = std::env::var("TRUSTLESS_KEY_PASSPHRASE").ok();
+    let handler = StubHandler::load(&args.cert_dir, passphrase)?;
 
     tracing::info!(
         default = %handler.default,
@@ -265,7 +162,7 @@ mod tests {
             ],
         );
 
-        let handler = StubHandler::load(dir.path()).unwrap();
+        let handler = StubHandler::load(dir.path(), None).unwrap();
 
         assert_eq!(handler.certs.len(), 1);
         assert_eq!(handler.default, "example.com/2026-01-01");
@@ -279,38 +176,11 @@ mod tests {
     }
 
     #[test]
-    fn dns_sans_from_pem_extracts_names() {
-        let rcgen::CertifiedKey { cert, .. } = rcgen::generate_simple_self_signed(vec![
-            "example.com".to_owned(),
-            "*.example.com".to_owned(),
-            "other.example.net".to_owned(),
-        ])
-        .unwrap();
-
-        let sans = dns_sans_from_pem(&cert.pem()).unwrap();
-        assert_eq!(
-            sans,
-            vec!["example.com", "*.example.com", "other.example.net"],
-        );
-    }
-
-    #[test]
-    fn dns_sans_from_pem_empty_sans() {
-        let key_pair = rcgen::KeyPair::generate().unwrap();
-        let mut params = rcgen::CertificateParams::default();
-        params.subject_alt_names = vec![];
-        let cert = params.self_signed(&key_pair).unwrap();
-
-        let sans = dns_sans_from_pem(&cert.pem()).unwrap();
-        assert!(sans.is_empty());
-    }
-
-    #[test]
     fn cert_entry_from_pem_constructs_entry() {
         let rcgen::CertifiedKey { cert, key_pair } =
             rcgen::generate_simple_self_signed(vec!["test.example.com".to_owned()]).unwrap();
 
-        let entry = Certificate::from_pem(
+        let entry = trustless_protocol::provider_helpers::Certificate::from_pem(
             "test/v1".to_owned(),
             cert.pem(),
             key_pair.serialize_pem().as_bytes(),
@@ -329,7 +199,6 @@ mod tests {
         std::fs::create_dir_all(&version_path).unwrap();
         std::fs::write(domain_path.join("current"), "v1").unwrap();
 
-        // Generate a cert with no SANs using CertificateParams directly
         let key_pair = rcgen::KeyPair::generate().unwrap();
         let mut params = rcgen::CertificateParams::default();
         params.subject_alt_names = vec![];
@@ -337,7 +206,7 @@ mod tests {
         std::fs::write(version_path.join("fullchain.pem"), cert.pem()).unwrap();
         std::fs::write(version_path.join("key.pem"), key_pair.serialize_pem()).unwrap();
 
-        let handler = StubHandler::load(dir.path()).unwrap();
+        let handler = StubHandler::load(dir.path(), None).unwrap();
         assert!(handler.certs[0].domains.is_empty());
     }
 }

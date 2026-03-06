@@ -41,6 +41,8 @@ trustless proxy start
 
 ### Deploy your key provider
 
+See [AWS Lambda Provider](docs/lambda-provider.md) for deploying a key provider backed by AWS Lambda and S3. For writing a custom provider, see [Writing a Key Provider](docs/writing-key-provider.md).
+
 ### Profiles
 
 You can use multiple profiles if you have multiple shared key providers. Default to `default` profile.

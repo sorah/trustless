@@ -1,17 +1,17 @@
 [package]
-name = "trustless-provider-stub"
+name = "trustless-provider-lambda"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
 
 [dependencies]
-trustless-protocol = { path = "../trustless-protocol", features = ["provider-helpers", "encrypted-key"] }
-anyhow = "1"
+trustless-protocol = { path = "../trustless-protocol" }
 clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
+aws-sdk-lambda = "1"
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+serde_json = "1"
+anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-
-[dev-dependencies]
-rcgen = "0.13"
-tempfile = "3"
