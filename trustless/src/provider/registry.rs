@@ -1,5 +1,5 @@
 use super::{ProviderError, ProviderState};
-use crate::signer::{RemoteSigningKey, SigningThreadHandle};
+use crate::signer::{RemoteSigningKey, SigningHandle};
 
 const ERROR_RING_CAPACITY: usize = 10;
 
@@ -17,7 +17,7 @@ struct ProviderRegistryInner {
 #[derive(Debug)]
 struct ProviderEntry {
     #[allow(dead_code)]
-    signing_handle: SigningThreadHandle,
+    signing_handle: SigningHandle,
     certificates: Vec<CertResolverEntry>,
     default_id: Option<String>,
     state: ProviderState,
@@ -73,7 +73,7 @@ impl ProviderRegistry {
     pub fn add_provider(
         &self,
         init: trustless_protocol::message::InitializeResult,
-        handle: SigningThreadHandle,
+        handle: SigningHandle,
     ) -> Result<(), crate::Error> {
         let (certificates, default_id) = parse_init_result(&init, &handle)?;
 
@@ -103,7 +103,7 @@ impl ProviderRegistry {
         &self,
         name: &str,
         init: trustless_protocol::message::InitializeResult,
-        handle: SigningThreadHandle,
+        handle: SigningHandle,
     ) -> Result<(), crate::Error> {
         let (certificates, default_id) = parse_init_result(&init, &handle)?;
 
@@ -227,7 +227,7 @@ impl ProviderRegistry {
 
 fn parse_init_result(
     init: &trustless_protocol::message::InitializeResult,
-    handle: &SigningThreadHandle,
+    handle: &SigningHandle,
 ) -> Result<(Vec<CertResolverEntry>, Option<String>), crate::Error> {
     use rustls_pki_types::pem::PemObject as _;
 
@@ -452,7 +452,7 @@ mod tests {
             inner.providers.insert(
                 "test".to_owned(),
                 ProviderEntry {
-                    signing_handle: SigningThreadHandle::disconnected(),
+                    signing_handle: SigningHandle::disconnected(),
                     certificates: Vec::new(),
                     default_id: None,
                     state: ProviderState::Running,
@@ -502,7 +502,7 @@ mod tests {
             inner.providers.insert(
                 "test".to_owned(),
                 ProviderEntry {
-                    signing_handle: SigningThreadHandle::disconnected(),
+                    signing_handle: SigningHandle::disconnected(),
                     certificates: Vec::new(),
                     default_id: None,
                     state: ProviderState::Running,
@@ -530,7 +530,7 @@ mod tests {
         let registry = ProviderRegistry::new();
 
         // Create a mock signing handle
-        let handle = SigningThreadHandle::disconnected();
+        let handle = SigningHandle::disconnected();
 
         // We need actual PEM certs for replace_provider. Use rcgen.
         let kp1 = rcgen::generate_simple_self_signed(vec!["a.example.com".to_owned()]).unwrap();

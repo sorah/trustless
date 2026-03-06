@@ -5,7 +5,7 @@ mod supervisor;
 pub use orchestrator::ProviderOrchestrator;
 pub use registry::ProviderRegistry;
 
-use crate::signer::SigningThreadHandle;
+use crate::signer::SigningHandle;
 
 // --- Error tracking ---
 
@@ -38,6 +38,6 @@ pub enum ProviderState {
 /// Represents one lifecycle of a spawned provider process.
 pub struct ProviderSession {
     pub client: std::sync::Arc<trustless_protocol::client::ProviderClient>,
-    pub signing_handle: SigningThreadHandle,
+    pub signing_handle: SigningHandle,
     pub stderr_lines: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
 }

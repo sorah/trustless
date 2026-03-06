@@ -1,25 +1,26 @@
-// --- SigningThread ---
+// --- SigningWorker ---
 
-pub struct SigningThread;
+pub struct SigningWorker;
 
 struct SignRequest {
     certificate_id: String,
     scheme: String,
     blob: Vec<u8>,
-    response_tx: std::sync::mpsc::Sender<Result<Vec<u8>, rustls::Error>>,
+    response_tx: tokio::sync::oneshot::Sender<Result<Vec<u8>, rustls::Error>>,
 }
 
-impl SigningThread {
+impl SigningWorker {
     pub fn start(
-        rt: tokio::runtime::Handle,
         client: std::sync::Arc<trustless_protocol::client::ProviderClient>,
         sign_timeout: std::time::Duration,
-    ) -> SigningThreadHandle {
-        let (tx, rx) = std::sync::mpsc::channel::<SignRequest>();
+    ) -> SigningHandle {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SignRequest>();
 
-        std::thread::spawn(move || {
-            while let Ok(req) = rx.recv() {
-                let result = rt.block_on(client.sign(&req.certificate_id, &req.scheme, &req.blob));
+        tokio::spawn(async move {
+            while let Some(req) = rx.recv().await {
+                let result = client
+                    .sign(&req.certificate_id, &req.scheme, &req.blob)
+                    .await;
                 let mapped =
                     result.map_err(|e| rustls::Error::General(format!("remote sign failed: {e}")));
                 // Ignore send error — caller may have dropped
@@ -27,7 +28,7 @@ impl SigningThread {
             }
         });
 
-        SigningThreadHandle {
+        SigningHandle {
             tx,
             timeout: sign_timeout,
         }
@@ -35,23 +36,22 @@ impl SigningThread {
 }
 
 #[derive(Clone)]
-pub struct SigningThreadHandle {
-    tx: std::sync::mpsc::Sender<SignRequest>,
+pub struct SigningHandle {
+    tx: tokio::sync::mpsc::UnboundedSender<SignRequest>,
     timeout: std::time::Duration,
 }
 
-impl std::fmt::Debug for SigningThreadHandle {
+impl std::fmt::Debug for SigningHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SigningThreadHandle")
-            .finish_non_exhaustive()
+        f.debug_struct("SigningHandle").finish_non_exhaustive()
     }
 }
 
-impl SigningThreadHandle {
+impl SigningHandle {
     /// Create a disconnected handle for use in tests and placeholder entries.
-    /// Any sign request will fail with "signing thread gone".
+    /// Any sign request will fail with "signing worker gone".
     pub fn disconnected() -> Self {
-        let (tx, _rx) = std::sync::mpsc::channel();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         Self {
             tx,
             timeout: std::time::Duration::from_secs(1),
@@ -64,7 +64,7 @@ impl SigningThreadHandle {
         scheme: &str,
         blob: &[u8],
     ) -> Result<Vec<u8>, rustls::Error> {
-        let (response_tx, response_rx) = std::sync::mpsc::channel();
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         let req = SignRequest {
             certificate_id: certificate_id.to_owned(),
             scheme: scheme.to_owned(),
@@ -72,19 +72,22 @@ impl SigningThreadHandle {
             response_tx,
         };
         self.tx.send(req).map_err(|_| {
-            rustls::Error::General("remote sign failed: signing thread gone".to_owned())
+            rustls::Error::General("remote sign failed: signing worker gone".to_owned())
         })?;
-        response_rx
-            .recv_timeout(self.timeout)
-            .map_err(|e| match e {
-                std::sync::mpsc::RecvTimeoutError::Timeout => rustls::Error::General(format!(
-                    "remote sign failed: timed out after {}s",
-                    self.timeout.as_secs(),
-                )),
-                std::sync::mpsc::RecvTimeoutError::Disconnected => {
-                    rustls::Error::General("remote sign failed: signing thread gone".to_owned())
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                match tokio::time::timeout(self.timeout, response_rx).await {
+                    Ok(Ok(result)) => result,
+                    Ok(Err(_)) => Err(rustls::Error::General(
+                        "remote sign failed: signing worker gone".to_owned(),
+                    )),
+                    Err(_) => Err(rustls::Error::General(format!(
+                        "remote sign failed: timed out after {}s",
+                        self.timeout.as_secs(),
+                    ))),
                 }
-            })?
+            })
+        })
     }
 }
 
@@ -92,7 +95,7 @@ impl SigningThreadHandle {
 
 #[derive(Debug)]
 pub struct RemoteSigningKey {
-    handle: SigningThreadHandle,
+    handle: SigningHandle,
     certificate_id: String,
     algorithm: rustls::SignatureAlgorithm,
     supported_schemes: Vec<rustls::SignatureScheme>,
@@ -100,7 +103,7 @@ pub struct RemoteSigningKey {
 
 impl RemoteSigningKey {
     pub fn new(
-        handle: SigningThreadHandle,
+        handle: SigningHandle,
         certificate_id: String,
         algorithm: rustls::SignatureAlgorithm,
         supported_schemes: Vec<rustls::SignatureScheme>,
@@ -140,7 +143,7 @@ impl rustls::sign::SigningKey for RemoteSigningKey {
 
 #[derive(Debug)]
 struct RemoteSigner {
-    handle: SigningThreadHandle,
+    handle: SigningHandle,
     certificate_id: String,
     scheme: rustls::SignatureScheme,
 }

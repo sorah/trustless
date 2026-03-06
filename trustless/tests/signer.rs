@@ -52,8 +52,7 @@ async fn spawn_provider_and_resolve_sni() {
     let (client, _stderr, mut child) = process.into_parts();
     let client = std::sync::Arc::new(client);
 
-    let handle = trustless::signer::SigningThread::start(
-        tokio::runtime::Handle::current(),
+    let handle = trustless::signer::SigningWorker::start(
         client.clone(),
         std::time::Duration::from_secs(trustless::config::default_sign_timeout_seconds()),
     );
@@ -95,8 +94,7 @@ async fn full_tls_handshake() {
     let (client, _stderr, mut child) = process.into_parts();
     let client = std::sync::Arc::new(client);
 
-    let handle = trustless::signer::SigningThread::start(
-        tokio::runtime::Handle::current(),
+    let handle = trustless::signer::SigningWorker::start(
         client.clone(),
         std::time::Duration::from_secs(trustless::config::default_sign_timeout_seconds()),
     );

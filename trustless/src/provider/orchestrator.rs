@@ -1,6 +1,6 @@
 use super::registry::ProviderRegistry;
 use super::supervisor::Supervisor;
-use crate::signer::SigningThreadHandle;
+use crate::signer::SigningHandle;
 
 #[derive(Clone)]
 pub struct ProviderOrchestrator {
@@ -116,7 +116,7 @@ pub(super) struct SpawnResult {
     #[allow(dead_code)]
     pub(super) client: std::sync::Arc<trustless_protocol::client::ProviderClient>,
     #[allow(dead_code)]
-    pub(super) signing_handle: SigningThreadHandle,
+    pub(super) signing_handle: SigningHandle,
     pub(super) stderr_lines: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
     pub(super) stderr_task: tokio::task::JoinHandle<()>,
 }
@@ -166,8 +166,7 @@ pub(super) async fn spawn_init_register(
 
     let init = client.initialize().await?;
 
-    let handle = crate::signer::SigningThread::start(
-        tokio::runtime::Handle::current(),
+    let handle = crate::signer::SigningWorker::start(
         client.clone(),
         std::time::Duration::from_secs(profile.sign_timeout_seconds),
     );
