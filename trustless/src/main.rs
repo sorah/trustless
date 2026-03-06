@@ -6,6 +6,11 @@ enum Cli {
     /// Proxy server management
     #[command(subcommand)]
     Proxy(trustless::cmd::proxy::ProxyCommand),
+    /// Manage proxy routes
+    Route {
+        #[command(subcommand)]
+        command: trustless::cmd::route::RouteCommand,
+    },
 }
 
 fn main() -> Result<std::process::ExitCode, anyhow::Error> {
@@ -25,6 +30,7 @@ fn main() -> Result<std::process::ExitCode, anyhow::Error> {
     let retval = match cli {
         Cli::Setup(args) => trustless::cmd::setup::run(&args),
         Cli::Proxy(cmd) => trustless::cmd::proxy::run(&cmd),
+        Cli::Route { command } => trustless::cmd::route::run(&command),
     };
     match retval {
         Ok(_) => Ok(std::process::ExitCode::SUCCESS),
