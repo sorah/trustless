@@ -13,22 +13,38 @@
 - Bridge async-to-sync: `Signer::sign()` is sync but provider is async — need a blocking bridge (e.g. `tokio::runtime::Handle::block_on` or a dedicated signing thread with a channel)
 - Implement `rustls::server::ResolvesServerCert` that holds all certificates from `initialize()` and resolves by SNI
 
-### 004: TLS Proxy Server
+### TLS server with remote signer
 
 - HTTPS listener using `tokio`, `hyper`, `rustls`
 - Accept TLS connections, terminate TLS using the remote signer from 003
 - Reverse-proxy HTTP requests to the backend (localhost:PORT)
 - Listen on a configurable port (default `:1443`)
 
-### 005: Proxy Lifecycle & CLI-Proxy IPC
+### Proxy Service
 
-- `trustless proxy start` — foreground proxy
+- Implement reverse proxy as a `tower::Service`
+- State management for name-to-backend mappings and CLI tools to manipulate them (e.g. add/remove mappings)
+- run as a plain HTTP service during this mission
+
+### Complete Provider registy and orchestration
+
+- Support adding provider, restarting provider
+- Collect errors from provider and expose as a function
+
+### Proxy process lifecycle & CLI-Proxy IPC
+
+- `trustless proxy start` — start foreground proxy process
 - Auto-start proxy from `trustless exec` (connect-or-start pattern, ref: mairu `connect_or_start()`)
-- Self-signed ephemeral cert for CLI-to-proxy HTTPS API (as described in `docs/internal.md`)
 - State directory: save proxy cert, socket/port info
-- Proxy reload (restart provider, re-initialize certs)
 
-### 006: `trustless exec`
+### Proxy control API
+
+- Self-signed ephemeral cert for CLI-to-proxy HTTPS API (as described in `docs/internal.md`)
+- `trustless proxy stop` — stop proxy process
+- Proxy reload (restart provider, re-initialize certs)
+- `trustless proxy status` — show proxy status, active mappings, provider error status
+
+### `trustless exec`
 
 - Assign a subdomain from available domains
 - Pick a random backend port
