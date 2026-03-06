@@ -81,19 +81,13 @@ async fn run_start_async(args: &ProxyStartArgs) -> anyhow::Result<()> {
         tracing::info!("No profiles configured");
     }
 
-    // Build TLS config
+    // Build TLS params (per-connection config built during LazyConfigAcceptor)
     let tls12 = args.tls12 || config.tls12;
-    let cert_resolver = Arc::new(crate::signer::CertResolver::new(registry));
-    let protocol_versions = if tls12 {
-        &[&rustls::version::TLS13, &rustls::version::TLS12] as &[_]
-    } else {
-        &[&rustls::version::TLS13] as &[_]
+    let tls_params = TlsParams {
+        registry,
+        tls12,
+        alpn_protocols: vec![b"h2".to_vec(), b"http/1.1".to_vec()],
     };
-    let mut tls_config = rustls::ServerConfig::builder_with_protocol_versions(protocol_versions)
-        .with_no_client_auth()
-        .with_cert_resolver(cert_resolver);
-    tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-    let tls_acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls_config));
 
     // Bind TCP listener
     let listener = bind_listener(port).await?;
@@ -123,7 +117,7 @@ async fn run_start_async(args: &ProxyStartArgs) -> anyhow::Result<()> {
     let app = crate::control::server::dispatch_router(server_state, proxy_app);
 
     // Serve
-    let result = serve(listener, tls_acceptor, app, shutdown_rx).await;
+    let result = serve(listener, tls_params, app, shutdown_rx).await;
 
     // Shutdown providers
     orchestrator.shutdown().await;
@@ -135,9 +129,29 @@ async fn run_start_async(args: &ProxyStartArgs) -> anyhow::Result<()> {
     result
 }
 
+struct TlsParams {
+    registry: crate::provider::ProviderRegistry,
+    tls12: bool,
+    alpn_protocols: Vec<Vec<u8>>,
+}
+
+static PROTOCOL_VERSIONS_TLS13: &[&rustls::SupportedProtocolVersion] = &[&rustls::version::TLS13];
+static PROTOCOL_VERSIONS_TLS12: &[&rustls::SupportedProtocolVersion] =
+    &[&rustls::version::TLS13, &rustls::version::TLS12];
+
+impl TlsParams {
+    fn protocol_versions(&self) -> &'static [&'static rustls::SupportedProtocolVersion] {
+        if self.tls12 {
+            PROTOCOL_VERSIONS_TLS12
+        } else {
+            PROTOCOL_VERSIONS_TLS13
+        }
+    }
+}
+
 async fn serve(
     listener: tokio::net::TcpListener,
-    tls_acceptor: tokio_rustls::TlsAcceptor,
+    tls_params: TlsParams,
     app: axum::Router,
     shutdown_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<()> {
@@ -147,6 +161,7 @@ async fn serve(
     let mut sigint = signal(SignalKind::interrupt())?;
 
     let graceful = hyper_util::server::graceful::GracefulShutdown::new();
+    let tls_params = Arc::new(tls_params);
 
     let shutdown = async {
         tokio::select! {
@@ -166,7 +181,7 @@ async fn serve(
                 }
             };
             tokio::spawn(handle_connection(
-                tls_acceptor.clone(),
+                tls_params.clone(),
                 stream,
                 addr,
                 app.clone(),
@@ -193,13 +208,41 @@ async fn serve(
 }
 
 async fn handle_connection(
-    acceptor: tokio_rustls::TlsAcceptor,
+    tls_params: Arc<TlsParams>,
     stream: tokio::net::TcpStream,
     addr: std::net::SocketAddr,
     app: axum::Router,
     watcher: hyper_util::server::graceful::Watcher,
 ) {
-    let tls_stream = match acceptor.accept(stream).await {
+    let acceptor =
+        tokio_rustls::LazyConfigAcceptor::new(rustls::server::Acceptor::default(), stream);
+    tokio::pin!(acceptor);
+
+    let start = match acceptor.as_mut().await {
+        Ok(start) => start,
+        Err(e) => {
+            tracing::debug!(addr = %addr, error = %e, "TLS accept failed");
+            return;
+        }
+    };
+
+    let sni = start.client_hello().server_name().map(|s| s.to_owned());
+    let certified_key = match tls_params.registry.resolve_by_sni(sni.as_deref()) {
+        Some(ck) => ck,
+        None => {
+            tracing::debug!(addr = %addr, sni = ?sni, "No certificate for SNI");
+            return;
+        }
+    };
+
+    let resolver = Arc::new(crate::signer::FixedCertResolver::new(certified_key));
+    let mut server_config =
+        rustls::ServerConfig::builder_with_protocol_versions(tls_params.protocol_versions())
+            .with_no_client_auth()
+            .with_cert_resolver(resolver);
+    server_config.alpn_protocols = tls_params.alpn_protocols.clone();
+
+    let tls_stream = match start.into_stream(Arc::new(server_config)).await {
         Ok(s) => s,
         Err(e) => {
             tracing::debug!(addr = %addr, error = %e, "TLS handshake failed");

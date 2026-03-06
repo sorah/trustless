@@ -156,24 +156,27 @@ impl rustls::sign::Signer for RemoteSigner {
     }
 }
 
-// --- CertResolver ---
+// --- FixedCertResolver ---
 
+/// A trivial `ResolvesServerCert` that always returns a pre-resolved `CertifiedKey`.
+///
+/// Used because `ServerConfig` requires a cert resolver — there's no API to pass
+/// `CertifiedKey` directly. The actual SNI-based resolution happens before the
+/// handshake via `LazyConfigAcceptor` + `ProviderRegistry::resolve_by_sni`.
 #[derive(Debug)]
-pub struct CertResolver {
-    registry: crate::provider::ProviderRegistry,
-}
+pub struct FixedCertResolver(std::sync::Arc<rustls::sign::CertifiedKey>);
 
-impl CertResolver {
-    pub fn new(registry: crate::provider::ProviderRegistry) -> Self {
-        Self { registry }
+impl FixedCertResolver {
+    pub fn new(key: std::sync::Arc<rustls::sign::CertifiedKey>) -> Self {
+        Self(key)
     }
 }
 
-impl rustls::server::ResolvesServerCert for CertResolver {
+impl rustls::server::ResolvesServerCert for FixedCertResolver {
     fn resolve(
         &self,
-        client_hello: rustls::server::ClientHello<'_>,
+        _client_hello: rustls::server::ClientHello<'_>,
     ) -> Option<std::sync::Arc<rustls::sign::CertifiedKey>> {
-        self.registry.resolve_by_sni(client_hello.server_name())
+        Some(self.0.clone())
     }
 }

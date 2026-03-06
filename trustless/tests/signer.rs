@@ -105,7 +105,8 @@ async fn full_tls_handshake() {
     let registry = trustless::provider::ProviderRegistry::new();
     registry.add_provider(init, handle).unwrap();
 
-    let resolver = trustless::signer::CertResolver::new(registry);
+    let certified_key = registry.resolve_by_sni(Some("localhost")).unwrap();
+    let resolver = trustless::signer::FixedCertResolver::new(certified_key);
 
     // Build server config
     let server_config = rustls::ServerConfig::builder()

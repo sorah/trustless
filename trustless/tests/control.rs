@@ -30,10 +30,7 @@ fn start_test_server(
     u16,
     tokio::sync::oneshot::Receiver<()>,
 ) {
-    let registry = trustless::provider::ProviderRegistry::new();
-    registry.register_control_cert(certified_key, vec!["trustless".to_owned()]);
-
-    let cert_resolver = Arc::new(trustless::signer::CertResolver::new(registry));
+    let cert_resolver = Arc::new(trustless::signer::FixedCertResolver::new(certified_key));
     let tls_config = rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_cert_resolver(cert_resolver);
@@ -119,10 +116,7 @@ async fn tls_handshake_with_control_cert() {
 
     let (certified_key, cert_der, _cert_pem) = generate_test_cert();
 
-    let registry = trustless::provider::ProviderRegistry::new();
-    registry.register_control_cert(certified_key, vec!["trustless".to_owned()]);
-
-    let cert_resolver = Arc::new(trustless::signer::CertResolver::new(registry));
+    let cert_resolver = Arc::new(trustless::signer::FixedCertResolver::new(certified_key));
     let tls_config = rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_cert_resolver(cert_resolver);
