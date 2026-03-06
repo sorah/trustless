@@ -24,7 +24,6 @@ impl trustless_protocol::handler::Handler for TestHandler {
     ) -> Result<trustless_protocol::message::SignResult, trustless_protocol::message::ErrorPayload>
     {
         if params.certificate_id == "test/v1" {
-            // Echo back reversed blob as "signature"
             let mut sig = params.blob.clone();
             sig.reverse();
             Ok(trustless_protocol::message::SignResult { signature: sig })
@@ -51,49 +50,53 @@ async fn handler_round_trip() {
 
         // Process exactly 3 requests, then exit
         for _ in 0..3 {
-            let request: trustless_protocol::message::Request =
+            let request: trustless_protocol::message::ReceivedRequest =
                 trustless_protocol::codec::recv_message(&mut reader)
                     .await
                     .unwrap();
             let id = request.id;
 
-            match request.body {
-                trustless_protocol::message::RequestBody::Initialize(_) => {
-                    use trustless_protocol::handler::Handler as _;
-                    let result = TestHandler.initialize().await.unwrap();
-                    let response = trustless_protocol::message::RawResponse {
-                        id,
-                        body: trustless_protocol::message::RawResponseBody::Result { result },
-                    };
-                    trustless_protocol::codec::send_message(&mut writer, &response)
-                        .await
-                        .unwrap();
-                }
-                trustless_protocol::message::RequestBody::Sign(params) => {
-                    use trustless_protocol::handler::Handler as _;
-                    match TestHandler.sign(params).await {
-                        Ok(result) => {
-                            let response = trustless_protocol::message::RawResponse {
-                                id,
-                                body: trustless_protocol::message::RawResponseBody::Result {
-                                    result,
-                                },
-                            };
-                            trustless_protocol::codec::send_message(&mut writer, &response)
-                                .await
-                                .unwrap();
-                        }
-                        Err(error) => {
-                            let response: trustless_protocol::message::RawResponse<
-                                trustless_protocol::message::SignResult,
-                            > = trustless_protocol::message::RawResponse {
-                                id,
-                                body: trustless_protocol::message::RawResponseBody::Error { error },
-                            };
-                            trustless_protocol::codec::send_message(&mut writer, &response)
-                                .await
-                                .unwrap();
-                        }
+            if request
+                .params
+                .as_any()
+                .downcast_ref::<trustless_protocol::message::InitializeParams>()
+                .is_some()
+            {
+                use trustless_protocol::handler::Handler as _;
+                let result = TestHandler.initialize().await.unwrap();
+                let response = trustless_protocol::message::Response {
+                    id,
+                    body: trustless_protocol::message::ResponseBody::Result { result },
+                };
+                trustless_protocol::codec::send_message(&mut writer, &response)
+                    .await
+                    .unwrap();
+            } else if let Some(params) = request
+                .params
+                .as_any()
+                .downcast_ref::<trustless_protocol::message::SignParams>()
+            {
+                use trustless_protocol::handler::Handler as _;
+                match TestHandler.sign(params.clone()).await {
+                    Ok(result) => {
+                        let response = trustless_protocol::message::Response {
+                            id,
+                            body: trustless_protocol::message::ResponseBody::Result { result },
+                        };
+                        trustless_protocol::codec::send_message(&mut writer, &response)
+                            .await
+                            .unwrap();
+                    }
+                    Err(error) => {
+                        let response: trustless_protocol::message::Response<
+                            trustless_protocol::message::SignResult,
+                        > = trustless_protocol::message::Response {
+                            id,
+                            body: trustless_protocol::message::ResponseBody::Error { error },
+                        };
+                        trustless_protocol::codec::send_message(&mut writer, &response)
+                            .await
+                            .unwrap();
                     }
                 }
             }
@@ -107,21 +110,19 @@ async fn handler_round_trip() {
         // 1. Initialize
         let req = trustless_protocol::message::Request {
             id: 1,
-            body: trustless_protocol::message::RequestBody::Initialize(
-                trustless_protocol::message::InitializeParams {},
-            ),
+            params: trustless_protocol::message::InitializeParams {},
         };
         trustless_protocol::codec::send_message(&mut writer, &req)
             .await
             .unwrap();
-        let resp: trustless_protocol::message::RawResponse<
+        let resp: trustless_protocol::message::Response<
             trustless_protocol::message::InitializeResult,
         > = trustless_protocol::codec::recv_message(&mut reader)
             .await
             .unwrap();
         assert_eq!(resp.id, 1);
         let init = match resp.body {
-            trustless_protocol::message::RawResponseBody::Result { result } => result,
+            trustless_protocol::message::ResponseBody::Result { result } => result,
             _ => panic!("expected Result"),
         };
         assert_eq!(init.default, "test/v1");
@@ -131,25 +132,22 @@ async fn handler_round_trip() {
         // 2. Sign (success)
         let req = trustless_protocol::message::Request {
             id: 2,
-            body: trustless_protocol::message::RequestBody::Sign(
-                trustless_protocol::message::SignParams {
-                    certificate_id: "test/v1".to_owned(),
-                    scheme: "ECDSA_NISTP256_SHA256".to_owned(),
-                    blob: vec![1, 2, 3, 4],
-                },
-            ),
+            params: trustless_protocol::message::SignParams {
+                certificate_id: "test/v1".to_owned(),
+                scheme: "ECDSA_NISTP256_SHA256".to_owned(),
+                blob: vec![1, 2, 3, 4],
+            },
         };
         trustless_protocol::codec::send_message(&mut writer, &req)
             .await
             .unwrap();
-        let resp: trustless_protocol::message::RawResponse<
-            trustless_protocol::message::SignResult,
-        > = trustless_protocol::codec::recv_message(&mut reader)
-            .await
-            .unwrap();
+        let resp: trustless_protocol::message::Response<trustless_protocol::message::SignResult> =
+            trustless_protocol::codec::recv_message(&mut reader)
+                .await
+                .unwrap();
         assert_eq!(resp.id, 2);
         match resp.body {
-            trustless_protocol::message::RawResponseBody::Result { result } => {
+            trustless_protocol::message::ResponseBody::Result { result } => {
                 assert_eq!(result.signature, vec![4, 3, 2, 1]);
             }
             _ => panic!("expected Result"),
@@ -158,25 +156,22 @@ async fn handler_round_trip() {
         // 3. Sign (error — unknown cert)
         let req = trustless_protocol::message::Request {
             id: 3,
-            body: trustless_protocol::message::RequestBody::Sign(
-                trustless_protocol::message::SignParams {
-                    certificate_id: "nonexistent".to_owned(),
-                    scheme: "ECDSA_NISTP256_SHA256".to_owned(),
-                    blob: vec![0xff],
-                },
-            ),
+            params: trustless_protocol::message::SignParams {
+                certificate_id: "nonexistent".to_owned(),
+                scheme: "ECDSA_NISTP256_SHA256".to_owned(),
+                blob: vec![0xff],
+            },
         };
         trustless_protocol::codec::send_message(&mut writer, &req)
             .await
             .unwrap();
-        let resp: trustless_protocol::message::RawResponse<
-            trustless_protocol::message::SignResult,
-        > = trustless_protocol::codec::recv_message(&mut reader)
-            .await
-            .unwrap();
+        let resp: trustless_protocol::message::Response<trustless_protocol::message::SignResult> =
+            trustless_protocol::codec::recv_message(&mut reader)
+                .await
+                .unwrap();
         assert_eq!(resp.id, 3);
         match resp.body {
-            trustless_protocol::message::RawResponseBody::Error { error } => {
+            trustless_protocol::message::ResponseBody::Error { error } => {
                 assert_eq!(error.code, 1);
                 assert!(error.message.contains("nonexistent"));
             }

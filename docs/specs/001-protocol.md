@@ -18,7 +18,7 @@ The key provider protocol is the core abstraction that separates key management 
 
 ### Wire Protocol
 
-The proxy spawns a key provider as a child process and communicates via stdin/stdout using [length-delimited codec](https://docs.rs/tokio-util/latest/tokio_util/codec/length_delimited/index.html) framing with JSON payloads. Provider stderr is inherited (for logging). The protocol is JSON-RPC-ish: each request carries an `id`, `method`, and `params`; responses carry the same `id` with either `result` or `error`.
+The proxy spawns a key provider as a child process and communicates via stdin/stdout using [length-delimited codec](https://docs.rs/tokio-util/latest/tokio_util/codec/length_delimited/index.html) framing with JSON payloads. Provider stderr is inherited (for logging). Each request carries an `id` and `params`; the `method` tag is embedded inside `params`. Responses carry the same `id` with either `result` or `error`.
 
 See `docs/key-provider-protocol.md` for the wire format specification.
 
@@ -87,7 +87,7 @@ Considered having the proxy tell the provider which signature scheme to use. Omi
 ## Prior Art
 
 - [Portless](https://github.com/vercel-labs/portless) — inspiration for the overall Trustless design
-- JSON-RPC 2.0 — the protocol borrows the id/method/params/result/error structure
+- JSON-RPC 2.0 — the protocol borrows the id/params/result/error structure
 - Acmesmith — the stub provider's cert directory layout follows Acmesmith's storage format
 
 ## Security and Privacy Considerations
@@ -141,22 +141,23 @@ trustless-provider-stub/src/main.rs
 
 | Type | Description |
 |---|---|
-| `Request` | Envelope with `id: u64` and flattened `RequestBody` |
-| `RequestBody` | Enum tagged by `method` with `content = "params"`: `Initialize(InitializeParams)`, `Sign(SignParams)` |
+| `Request<P>` | Generic envelope with `id: u64` and `params: P` where P implements `RequestParams` |
+| `ReceivedRequest` | Handler-side envelope with `id: u64` and `params: Box<dyn RequestParams>` for typetag dispatch |
+| `RequestParams` trait | Typetag-tagged trait with `tag = "method"`, implemented by `InitializeParams` and `SignParams` |
 | `InitializeParams` | Empty struct |
 | `SignParams` | `certificate_id: String`, `blob: Vec<u8>` (base64 via `serde_with`) |
-| `RawResponse<R>` | Envelope with `id: u64` and flattened `RawResponseBody<R>` |
-| `RawResponseBody<R>` | Untagged enum: `Result { result: R }` or `Error { error: ErrorPayload }` |
+| `Response<R>` | Envelope with `id: u64` and flattened `ResponseBody<R>` |
+| `ResponseBody<R>` | Untagged enum: `Result { result: R }` or `Error { error: ErrorPayload }` |
 | `ErrorPayload` | `code: i64`, `message: String` |
 | `InitializeResult` | `default: String`, `certificates: Vec<CertificateInfo>` |
 | `CertificateInfo` | `id: String`, `domains: Vec<String>`, `pem: String` |
 | `SignResult` | `signature: Vec<u8>` (base64 via `serde_with`) |
 
-The response type `RawResponse<R>` is generic — the client specifies `R` based on which method was called (e.g., `RawResponse<InitializeResult>`). This avoids needing a method tag on responses.
+Both `Request<P>` and `Response<R>` are generic. The client specifies the concrete params type when sending and the result type when receiving (e.g., `Request<SignParams>`, `Response<SignResult>`). The handler uses `ReceivedRequest` with typetag dispatch to deserialize unknown request types.
 
 **Codec** (`codec.rs`): Thin wrappers around `tokio_util::codec::LengthDelimitedCodec` providing `framed_read`, `framed_write`, `send_message`, and `recv_message` helpers.
 
-**Client** (`client.rs`): `ProviderClient` wraps `Mutex<ProviderClientInner>` holding the framed reader/writer, child process, and a monotonic request ID counter. The private `call<R>` method assigns an ID, sends the request, reads a `RawResponse<R>`, validates the response ID matches, and extracts the result or error.
+**Client** (`client.rs`): `ProviderClient` wraps `Mutex<ProviderClientInner>` holding the framed reader/writer, child process, and a monotonic request ID counter. The private `call<R>` method assigns an ID, sends the request, reads a `Response<R>`, validates the response ID matches, and extracts the result or error.
 
 **Handler** (`handler.rs`): The `Handler` trait has two async methods (`initialize`, `sign`). The `run()` function reads requests from stdin in a loop, dispatches to the handler, and writes responses to stdout. EOF on stdin terminates the loop cleanly.
 
@@ -178,7 +179,7 @@ Signing: offers all common TLS signature schemes to `SigningKey::choose_scheme()
 - **No `scheme` in sign protocol**: Provider infers signature scheme from key type. The proxy determines supported schemes from the certificate's public key.
 - **PEM loading**: Uses `rustls_pki_types` PemObject trait — only unencrypted PEMs.
 - **Signing**: Uses `rustls::crypto::ring::sign::any_supported_type()` which supports RSA, ECDSA (P-256, P-384), and Ed25519.
-- **`RawResponse<R>` generic**: Avoids needing a method tag on responses; the client knows what type to expect based on the request it sent.
+- **`Response<R>` generic**: Avoids needing a method tag on responses; the client knows what type to expect based on the request it sent.
 
 ## Current Status
 

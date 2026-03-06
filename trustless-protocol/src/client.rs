@@ -35,10 +35,7 @@ where
     pub async fn initialize(
         &self,
     ) -> Result<crate::message::InitializeResult, crate::error::Error> {
-        self.call(crate::message::RequestBody::Initialize(
-            crate::message::InitializeParams {},
-        ))
-        .await
+        self.call(crate::message::InitializeParams {}).await
     }
 
     /// Send a `sign` request and return the raw signature bytes.
@@ -49,29 +46,28 @@ where
         blob: &[u8],
     ) -> Result<Vec<u8>, crate::error::Error> {
         let result: crate::message::SignResult = self
-            .call(crate::message::RequestBody::Sign(
-                crate::message::SignParams {
-                    certificate_id: certificate_id.to_owned(),
-                    scheme: scheme.to_owned(),
-                    blob: blob.to_vec(),
-                },
-            ))
+            .call(crate::message::SignParams {
+                certificate_id: certificate_id.to_owned(),
+                scheme: scheme.to_owned(),
+                blob: blob.to_vec(),
+            })
             .await?;
         Ok(result.signature)
     }
 
-    async fn call<T: serde::de::DeserializeOwned>(
-        &self,
-        body: crate::message::RequestBody,
-    ) -> Result<T, crate::error::Error> {
+    async fn call<P, T>(&self, params: P) -> Result<T, crate::error::Error>
+    where
+        P: crate::message::RequestParams + serde::Serialize,
+        T: serde::de::DeserializeOwned,
+    {
         let mut inner = self.inner.lock().await;
         let id = inner.next_id;
         inner.next_id += 1;
 
-        let request = crate::message::Request { id, body };
+        let request = crate::message::Request { id, params };
         crate::codec::send_message(&mut inner.writer, &request).await?;
 
-        let response: crate::message::RawResponse<T> =
+        let response: crate::message::Response<T> =
             crate::codec::recv_message(&mut inner.reader).await?;
 
         if response.id != id {
@@ -82,13 +78,11 @@ where
         }
 
         match response.body {
-            crate::message::RawResponseBody::Result { result } => Ok(result),
-            crate::message::RawResponseBody::Error { error } => {
-                Err(crate::error::Error::Provider {
-                    code: error.code,
-                    message: error.message,
-                })
-            }
+            crate::message::ResponseBody::Result { result } => Ok(result),
+            crate::message::ResponseBody::Error { error } => Err(crate::error::Error::Provider {
+                code: error.code,
+                message: error.message,
+            }),
         }
     }
 }

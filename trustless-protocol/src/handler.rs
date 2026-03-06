@@ -31,49 +31,70 @@ pub async fn run(handler: impl Handler) -> Result<(), crate::error::Error> {
     let mut writer = crate::codec::framed_write(stdout);
 
     loop {
-        let request: crate::message::Request = match crate::codec::recv_message(&mut reader).await {
-            Ok(req) => req,
-            Err(crate::error::Error::ProcessExited) => break,
-            Err(e) => return Err(e),
-        };
+        let request: crate::message::ReceivedRequest =
+            match crate::codec::recv_message(&mut reader).await {
+                Ok(req) => req,
+                Err(crate::error::Error::ProcessExited) => break,
+                Err(e) => return Err(e),
+            };
 
         let id = request.id;
 
-        match request.body {
-            crate::message::RequestBody::Initialize(_params) => match handler.initialize().await {
+        if let Some(_params) = request
+            .params
+            .as_any()
+            .downcast_ref::<crate::message::InitializeParams>()
+        {
+            match handler.initialize().await {
                 Ok(result) => {
-                    let response = crate::message::RawResponse {
+                    let response = crate::message::Response {
                         id,
-                        body: crate::message::RawResponseBody::Result { result },
+                        body: crate::message::ResponseBody::Result { result },
                     };
                     crate::codec::send_message(&mut writer, &response).await?;
                 }
                 Err(error) => {
-                    let response: crate::message::RawResponse<crate::message::InitializeResult> =
-                        crate::message::RawResponse {
+                    let response: crate::message::Response<crate::message::InitializeResult> =
+                        crate::message::Response {
                             id,
-                            body: crate::message::RawResponseBody::Error { error },
+                            body: crate::message::ResponseBody::Error { error },
                         };
                     crate::codec::send_message(&mut writer, &response).await?;
                 }
-            },
-            crate::message::RequestBody::Sign(params) => match handler.sign(params).await {
+            }
+        } else if let Some(params) = request
+            .params
+            .as_any()
+            .downcast_ref::<crate::message::SignParams>()
+        {
+            match handler.sign(params.clone()).await {
                 Ok(result) => {
-                    let response = crate::message::RawResponse {
+                    let response = crate::message::Response {
                         id,
-                        body: crate::message::RawResponseBody::Result { result },
+                        body: crate::message::ResponseBody::Result { result },
                     };
                     crate::codec::send_message(&mut writer, &response).await?;
                 }
                 Err(error) => {
-                    let response: crate::message::RawResponse<crate::message::SignResult> =
-                        crate::message::RawResponse {
+                    let response: crate::message::Response<crate::message::SignResult> =
+                        crate::message::Response {
                             id,
-                            body: crate::message::RawResponseBody::Error { error },
+                            body: crate::message::ResponseBody::Error { error },
                         };
                     crate::codec::send_message(&mut writer, &response).await?;
                 }
-            },
+            }
+        } else {
+            let response: crate::message::Response<()> = crate::message::Response {
+                id,
+                body: crate::message::ResponseBody::Error {
+                    error: crate::message::ErrorPayload {
+                        code: -1,
+                        message: "unknown method".to_owned(),
+                    },
+                },
+            };
+            crate::codec::send_message(&mut writer, &response).await?;
         }
     }
 

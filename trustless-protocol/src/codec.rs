@@ -60,24 +60,28 @@ mod tests {
 
         let request = crate::message::Request {
             id: 1,
-            body: crate::message::RequestBody::Initialize(crate::message::InitializeParams {}),
+            params: crate::message::InitializeParams {},
         };
         super::send_message(&mut writer, &request).await.unwrap();
 
-        let received: crate::message::Request = super::recv_message(&mut reader).await.unwrap();
+        let received: crate::message::ReceivedRequest =
+            super::recv_message(&mut reader).await.unwrap();
         assert_eq!(received.id, 1);
-        assert!(matches!(
-            received.body,
-            crate::message::RequestBody::Initialize(_)
-        ));
+        assert!(
+            received
+                .params
+                .as_any()
+                .downcast_ref::<crate::message::InitializeParams>()
+                .is_some()
+        );
 
         // Send a response back
         let mut server_writer = super::framed_write(write_half);
         let mut client_reader = super::framed_read(client_read);
 
-        let response = crate::message::RawResponse {
+        let response = crate::message::Response {
             id: 1,
-            body: crate::message::RawResponseBody::<crate::message::InitializeResult>::Result {
+            body: crate::message::ResponseBody::<crate::message::InitializeResult>::Result {
                 result: crate::message::InitializeResult {
                     default: "cert1".to_owned(),
                     certificates: vec![],
@@ -88,11 +92,11 @@ mod tests {
             .await
             .unwrap();
 
-        let received: crate::message::RawResponse<crate::message::InitializeResult> =
+        let received: crate::message::Response<crate::message::InitializeResult> =
             super::recv_message(&mut client_reader).await.unwrap();
         assert_eq!(received.id, 1);
         match received.body {
-            crate::message::RawResponseBody::Result { result } => {
+            crate::message::ResponseBody::Result { result } => {
                 assert_eq!(result.default, "cert1");
             }
             _ => panic!("expected Result"),
@@ -104,7 +108,8 @@ mod tests {
         let (client, server) = tokio::io::duplex(4096);
         drop(client);
         let mut reader = super::framed_read(server);
-        let result: Result<crate::message::Request, _> = super::recv_message(&mut reader).await;
+        let result: Result<crate::message::ReceivedRequest, _> =
+            super::recv_message(&mut reader).await;
         assert!(matches!(result, Err(crate::error::Error::ProcessExited)));
     }
 
@@ -121,25 +126,26 @@ mod tests {
         for i in 1..=5 {
             let req = crate::message::Request {
                 id: i,
-                body: crate::message::RequestBody::Sign(crate::message::SignParams {
+                params: crate::message::SignParams {
                     certificate_id: format!("cert{i}"),
                     scheme: "ECDSA_NISTP256_SHA256".to_owned(),
                     blob: vec![i as u8; 16],
-                }),
+                },
             };
             super::send_message(&mut writer, &req).await.unwrap();
         }
 
         for i in 1..=5 {
-            let received: crate::message::Request = super::recv_message(&mut reader).await.unwrap();
+            let received: crate::message::ReceivedRequest =
+                super::recv_message(&mut reader).await.unwrap();
             assert_eq!(received.id, i);
-            match received.body {
-                crate::message::RequestBody::Sign(params) => {
-                    assert_eq!(params.certificate_id, format!("cert{i}"));
-                    assert_eq!(params.blob, vec![i as u8; 16]);
-                }
-                _ => panic!("expected Sign"),
-            }
+            let params = received
+                .params
+                .as_any()
+                .downcast_ref::<crate::message::SignParams>()
+                .unwrap();
+            assert_eq!(params.certificate_id, format!("cert{i}"));
+            assert_eq!(params.blob, vec![i as u8; 16]);
         }
     }
 }

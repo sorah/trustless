@@ -4,13 +4,15 @@ Trustless connects to a specified key provider by running a command line specifi
 
 ## Payload
 
-JSON-RPC ish.
+Each request carries an `id` and a `params` object. The `method` tag is embedded inside `params` to identify the request type.
 
 ```
 {
     "id": 123,
-    "method": "...",
-    "params": { ... }
+    "params": {
+        "method": "...",
+        ...
+    }
 }
 ```
 
@@ -36,8 +38,9 @@ __Request:__
 
 ```json
 {
-    "method": "initialize",
+    "id": 1,
     "params": {
+        "method": "initialize"
     }
 }
 ```
@@ -73,8 +76,9 @@ __Request:__
 
 ```json
 {
-    "method": "sign",
+    "id": 2,
     "params": {
+        "method": "sign",
         "certificate_id": "cert1",
         "scheme": "RSA_PSS_SHA256",
         "blob": "base64 string"
