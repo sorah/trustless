@@ -1,3 +1,5 @@
+// Ported from https://github.com/sorah/mairu/blob/main/src/ppid.rs
+
 #[cfg(unix)]
 pub async fn wait_for_parent_process_die(parent: nix::unistd::Pid) -> Result<(), crate::Error> {
     use tokio_stream::StreamExt;
