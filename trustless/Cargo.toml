@@ -9,13 +9,16 @@ trustless-protocol = { path = "../trustless-protocol" }
 anyhow = "1"
 axum = { version = "0.8", features = ["ws"] }
 bytes = "1"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 daemonize = { version = "0.1.0", package = "daemonix" }
 http = "1"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "server-graceful", "http1", "http2"] }
-nix = { version = "0.29", features = ["fs", "signal"] }
+nix = { version = "0.29", features = ["fs", "signal", "process"] }
+cfg-if = "1"
+async-stream = "0.3"
+futures-core = "0.3"
 parking_lot = "0.12"
 process_path = "0.1"
 rcgen = "0.13"
@@ -28,6 +31,7 @@ socket2 = "0.5"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-rustls = "0.26"
+tokio-stream = { version = "0.1", features = ["signal"] }
 tokio-util = "0.7"
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"

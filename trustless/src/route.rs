@@ -34,7 +34,7 @@ pub struct RouteTable {
     inner: Arc<parking_lot::Mutex<Inner>>,
 }
 
-fn validate_hostname(host: &str) -> Result<(), RouteError> {
+pub fn validate_hostname(host: &str) -> Result<(), RouteError> {
     if host.eq_ignore_ascii_case("trustless") {
         return Err(RouteError::ReservedHostname(host.to_string()));
     }

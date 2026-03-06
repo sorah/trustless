@@ -19,7 +19,9 @@
 
 ### `trustless exec`
 
-- Assign a subdomain + suffix from a specified profile. Optinally `--domain` to specify by a suffix.
+- `trustless exec <subdomain> -- <command> ...`
+- Autostarts proxy if not running and autostart is enabled
+- Assign a subdomain + suffix from a specified profile by `--profile` (or `$TRUSTLESS_PROFILE` via clap::env). Optinally `--domain` to specify by a suffix.
 - Pick a backend port. Use ephemeral port (0) to let the OS to assign a port, then release it and use as a `$PORT`
 - Register the name-to-backend mapping with the running proxy
 - Exec the user command with `PORT` and `HOST` env vars

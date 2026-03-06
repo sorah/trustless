@@ -1,3 +1,4 @@
+pub mod exec;
 pub mod proxy;
 pub mod route;
 pub mod setup;
