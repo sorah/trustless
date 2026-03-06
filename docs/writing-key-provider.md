@@ -204,50 +204,51 @@ The `blob` field in sign requests and the `signature` field in sign responses us
 
 ### Read Loop Pseudocode
 
-```python
-import struct, json, sys, base64
+```ruby
+require 'json'
+require 'base64'
 
-def read_frame():
-    header = sys.stdin.buffer.read(4)
-    if len(header) < 4:
-        return None  # EOF
-    length = struct.unpack('>I', header)[0]
-    data = sys.stdin.buffer.read(length)
-    return json.loads(data)
+def read_frame
+  header = $stdin.read(4)
+  return nil if header.nil? || header.length < 4
+  length = header.unpack1('N')
+  data = $stdin.read(length)
+  JSON.parse(data)
+end
 
-def write_frame(obj):
-    data = json.dumps(obj).encode()
-    sys.stdout.buffer.write(struct.pack('>I', len(data)))
-    sys.stdout.buffer.write(data)
-    sys.stdout.buffer.flush()
+def write_frame(obj)
+  data = JSON.generate(obj)
+  $stdout.write([data.bytesize].pack('N'))
+  $stdout.write(data)
+  $stdout.flush
+end
 
-while True:
-    request = read_frame()
-    if request is None:
-        break
-
-    if request["method"] == "initialize":
-        write_frame({
-            "id": request["id"],
-            "result": {
-                "default": "my-cert",
-                "certificates": [{
-                    "id": "my-cert",
-                    "domains": ["*.example.com"],
-                    "pem": open("fullchain.pem").read(),
-                    "schemes": ["ECDSA_NISTP256_SHA256"]
-                }]
-            }
-        })
-    elif request["method"] == "sign":
-        blob = base64.b64decode(request["params"]["blob"])
-        signature = sign(blob, request["params"]["scheme"])
-        write_frame({
-            "id": request["id"],
-            "result": {
-                "signature": base64.b64encode(signature).decode()
-            }
-        })
+while (request = read_frame)
+  case request["method"]
+  when "initialize"
+    write_frame({
+      "id" => request["id"],
+      "result" => {
+        "default" => "my-cert",
+        "certificates" => [{
+          "id" => "my-cert",
+          "domains" => ["*.example.com"],
+          "pem" => File.read("fullchain.pem"),
+          "schemes" => ["ECDSA_NISTP256_SHA256"]
+        }]
+      }
+    })
+  when "sign"
+    blob = Base64.decode64(request["params"]["blob"])
+    signature = sign(blob, request["params"]["scheme"])
+    write_frame({
+      "id" => request["id"],
+      "result" => {
+        "signature" => Base64.strict_encode64(signature)
+      }
+    })
+  end
+end
 ```
 
 ## Supported Signature Schemes
