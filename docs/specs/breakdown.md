@@ -49,10 +49,5 @@
 
 ## Misc quality
 
-- trustless-protocol to lightweight
-- `use` rule deviations
-- tmpdir tests correctness
 - debounce route file (1s)
 - update docs/internal.md
-- aws_lc_rs
-- ban serde_json::Value
