@@ -320,7 +320,7 @@ fn parse_init_result(
     Ok((certificates, default_id))
 }
 
-fn matches_sni(sni: &str, domains: &[String]) -> bool {
+pub(crate) fn matches_sni(sni: &str, domains: &[String]) -> bool {
     for domain in domains {
         if domain == sni {
             return true;

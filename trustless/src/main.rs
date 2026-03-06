@@ -11,6 +11,8 @@ enum Cli {
         #[command(subcommand)]
         command: trustless::cmd::route::RouteCommand,
     },
+    /// Test a key provider command
+    TestProvider(trustless::cmd::test_provider::TestProviderArgs),
 }
 
 fn main() -> Result<std::process::ExitCode, anyhow::Error> {
@@ -38,12 +40,14 @@ fn main() -> Result<std::process::ExitCode, anyhow::Error> {
         Cli::Proxy(trustless::cmd::proxy::ProxyCommand::Stop(_)) => enable_log(LogType::Custom),
         Cli::Setup(_) => enable_log(LogType::Custom),
         Cli::Route { .. } => enable_log(LogType::Custom),
+        Cli::TestProvider(_) => enable_log(LogType::Custom),
     }
 
     let retval = match cli {
         Cli::Setup(args) => trustless::cmd::setup::run(&args),
         Cli::Proxy(cmd) => trustless::cmd::proxy::run(&cmd),
         Cli::Route { command } => trustless::cmd::route::run(&command),
+        Cli::TestProvider(args) => trustless::cmd::test_provider::run(&args),
     };
     match retval {
         Ok(_) => Ok(std::process::ExitCode::SUCCESS),
