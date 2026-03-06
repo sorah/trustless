@@ -1,4 +1,4 @@
-struct CertEntry {
+struct Certificate {
     id: String,
     domains: Vec<String>,
     fullchain_pem: String,
@@ -30,7 +30,7 @@ fn dns_sans_from_pem(fullchain_pem: &str) -> anyhow::Result<Vec<String>> {
     Ok(dns_names)
 }
 
-impl CertEntry {
+impl Certificate {
     fn from_pem(id: String, fullchain_pem: String, key_pem: &[u8]) -> anyhow::Result<Self> {
         use rustls_pki_types::pem::PemObject as _;
 
@@ -52,7 +52,7 @@ impl CertEntry {
 
 struct StubHandler {
     default: String,
-    certs: Vec<CertEntry>,
+    certs: Vec<Certificate>,
 }
 
 impl StubHandler {
@@ -90,7 +90,7 @@ impl StubHandler {
             let key_pem = std::fs::read(version_dir.join("key.pem"))?;
 
             let id = format!("{domain_name}/{version}");
-            let cert = CertEntry::from_pem(id.clone(), fullchain_pem, &key_pem)?;
+            let cert = Certificate::from_pem(id.clone(), fullchain_pem, &key_pem)?;
 
             if default.is_none() {
                 default = Some(id);
@@ -283,7 +283,7 @@ mod tests {
         let rcgen::CertifiedKey { cert, key_pair } =
             rcgen::generate_simple_self_signed(vec!["test.example.com".to_owned()]).unwrap();
 
-        let entry = CertEntry::from_pem(
+        let entry = Certificate::from_pem(
             "test/v1".to_owned(),
             cert.pem(),
             key_pair.serialize_pem().as_bytes(),
