@@ -5,6 +5,51 @@ struct CertEntry {
     signing_key: std::sync::Arc<dyn rustls::sign::SigningKey>,
 }
 
+fn dns_sans_from_pem(fullchain_pem: &str) -> anyhow::Result<Vec<String>> {
+    use rustls_pki_types::pem::PemObject as _;
+
+    let leaf_der = rustls_pki_types::CertificateDer::pem_slice_iter(fullchain_pem.as_bytes())
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("fullchain PEM is empty"))?
+        .map_err(|e| anyhow::anyhow!("failed to parse leaf cert PEM: {e}"))?;
+
+    let (_, cert) = x509_parser::parse_x509_certificate(&leaf_der)
+        .map_err(|e| anyhow::anyhow!("failed to parse leaf certificate: {e}"))?;
+
+    let mut dns_names = Vec::new();
+    if let Some(san) = cert
+        .subject_alternative_name()
+        .map_err(|e| anyhow::anyhow!("failed to parse SAN extension: {e}"))?
+    {
+        for name in &san.value.general_names {
+            if let x509_parser::extensions::GeneralName::DNSName(dns) = name {
+                dns_names.push((*dns).to_owned());
+            }
+        }
+    }
+    Ok(dns_names)
+}
+
+impl CertEntry {
+    fn from_pem(id: String, fullchain_pem: String, key_pem: &[u8]) -> anyhow::Result<Self> {
+        use rustls_pki_types::pem::PemObject as _;
+
+        let domains = dns_sans_from_pem(&fullchain_pem)?;
+
+        let key_der = rustls_pki_types::PrivateKeyDer::from_pem_slice(key_pem)
+            .map_err(|e| anyhow::anyhow!("failed to parse key PEM: {e}"))?;
+        let signing_key = rustls::crypto::ring::sign::any_supported_type(&key_der)
+            .map_err(|e| anyhow::anyhow!("failed to parse signing key: {e}"))?;
+
+        Ok(Self {
+            id,
+            domains,
+            fullchain_pem,
+            signing_key,
+        })
+    }
+}
+
 struct StubHandler {
     default: String,
     certs: Vec<CertEntry>,
@@ -42,54 +87,16 @@ impl StubHandler {
             let version_dir = path.join(&version);
 
             let fullchain_pem = std::fs::read_to_string(version_dir.join("fullchain.pem"))?;
-
-            let key_der = {
-                use rustls_pki_types::pem::PemObject as _;
-                rustls_pki_types::PrivateKeyDer::from_pem_file(version_dir.join("key.pem"))
-                    .map_err(|e| anyhow::anyhow!("failed to load key.pem: {e}"))?
-            };
-
-            let signing_key = rustls::crypto::ring::sign::any_supported_type(&key_der)
-                .map_err(|e| anyhow::anyhow!("failed to parse signing key: {e}"))?;
+            let key_pem = std::fs::read(version_dir.join("key.pem"))?;
 
             let id = format!("{domain_name}/{version}");
-            let domains = {
-                use rustls_pki_types::pem::PemObject as _;
-                let leaf_der = rustls_pki_types::CertificateDer::pem_file_iter(
-                    version_dir.join("fullchain.pem"),
-                )
-                .map_err(|e| anyhow::anyhow!("failed to read fullchain.pem for DER parsing: {e}"))?
-                .next()
-                .ok_or_else(|| anyhow::anyhow!("fullchain.pem is empty"))?
-                .map_err(|e| anyhow::anyhow!("failed to parse leaf cert PEM: {e}"))?;
-
-                let (_, cert) = x509_parser::parse_x509_certificate(&leaf_der)
-                    .map_err(|e| anyhow::anyhow!("failed to parse leaf certificate: {e}"))?;
-
-                let mut dns_names = Vec::new();
-                if let Some(san) = cert
-                    .subject_alternative_name()
-                    .map_err(|e| anyhow::anyhow!("failed to parse SAN extension: {e}"))?
-                {
-                    for name in &san.value.general_names {
-                        if let x509_parser::extensions::GeneralName::DNSName(dns) = name {
-                            dns_names.push((*dns).to_owned());
-                        }
-                    }
-                }
-                dns_names
-            };
+            let cert = CertEntry::from_pem(id.clone(), fullchain_pem, &key_pem)?;
 
             if default.is_none() {
-                default = Some(id.clone());
+                default = Some(id);
             }
 
-            certs.push(CertEntry {
-                id,
-                domains,
-                fullchain_pem,
-                signing_key,
-            });
+            certs.push(cert);
         }
 
         let default = default.ok_or_else(|| anyhow::anyhow!("no certificates found"))?;
@@ -242,6 +249,49 @@ mod tests {
             cert.domains,
             vec!["example.com", "*.example.com", "other.example.net"],
         );
+    }
+
+    #[test]
+    fn dns_sans_from_pem_extracts_names() {
+        let rcgen::CertifiedKey { cert, .. } = rcgen::generate_simple_self_signed(vec![
+            "example.com".to_owned(),
+            "*.example.com".to_owned(),
+            "other.example.net".to_owned(),
+        ])
+        .unwrap();
+
+        let sans = dns_sans_from_pem(&cert.pem()).unwrap();
+        assert_eq!(
+            sans,
+            vec!["example.com", "*.example.com", "other.example.net"],
+        );
+    }
+
+    #[test]
+    fn dns_sans_from_pem_empty_sans() {
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::default();
+        params.subject_alt_names = vec![];
+        let cert = params.self_signed(&key_pair).unwrap();
+
+        let sans = dns_sans_from_pem(&cert.pem()).unwrap();
+        assert!(sans.is_empty());
+    }
+
+    #[test]
+    fn cert_entry_from_pem_constructs_entry() {
+        let rcgen::CertifiedKey { cert, key_pair } =
+            rcgen::generate_simple_self_signed(vec!["test.example.com".to_owned()]).unwrap();
+
+        let entry = CertEntry::from_pem(
+            "test/v1".to_owned(),
+            cert.pem(),
+            key_pair.serialize_pem().as_bytes(),
+        )
+        .unwrap();
+
+        assert_eq!(entry.id, "test/v1");
+        assert_eq!(entry.domains, vec!["test.example.com"]);
     }
 
     #[test]
