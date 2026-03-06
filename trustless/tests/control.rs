@@ -23,6 +23,7 @@ fn generate_test_cert() -> (
 
 fn start_test_server(
     certified_key: std::sync::Arc<rustls::sign::CertifiedKey>,
+    state_dir: std::path::PathBuf,
 ) -> (
     tokio::task::JoinHandle<()>,
     u16,
@@ -43,7 +44,7 @@ fn start_test_server(
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let registry = trustless::provider::ProviderRegistry::new();
     let orchestrator = trustless::provider::ProviderOrchestrator::new(registry.clone());
-    let route_table = trustless::route::RouteTable::new(std::env::temp_dir());
+    let route_table = trustless::route::RouteTable::new(state_dir);
     let server_state = trustless::control::server::ServerState::new(
         shutdown_tx,
         orchestrator,
@@ -91,7 +92,9 @@ async fn proxy_lifecycle_in_process() {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let (certified_key, _cert_der, cert_pem) = generate_test_cert();
-    let (server_handle, port, shutdown_rx) = start_test_server(certified_key);
+    let dir = tempfile::tempdir().unwrap();
+    let (server_handle, port, shutdown_rx) =
+        start_test_server(certified_key, dir.path().to_path_buf());
 
     // Give server a moment to start accepting
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;

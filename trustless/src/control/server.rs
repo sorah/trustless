@@ -152,7 +152,11 @@ mod tests {
     use super::*;
     use tower::ServiceExt as _;
 
-    fn test_state() -> (ServerState, tokio::sync::oneshot::Receiver<()>) {
+    fn test_state() -> (
+        ServerState,
+        tokio::sync::oneshot::Receiver<()>,
+        tempfile::TempDir,
+    ) {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let registry = crate::provider::ProviderRegistry::new();
         let orchestrator = crate::provider::ProviderOrchestrator::new(registry.clone());
@@ -161,6 +165,7 @@ mod tests {
         (
             ServerState::new(tx, orchestrator, registry, route_table, 1443),
             rx,
+            dir,
         )
     }
 
@@ -171,7 +176,7 @@ mod tests {
 
     #[tokio::test]
     async fn ping_returns_ok() {
-        let (state, _rx) = test_state();
+        let (state, _rx, _dir) = test_state();
         let app = dispatch_router(state, stub_proxy());
 
         let req = axum::http::Request::builder()
@@ -190,7 +195,7 @@ mod tests {
 
     #[tokio::test]
     async fn stop_returns_ok_and_triggers_shutdown() {
-        let (state, rx) = test_state();
+        let (state, rx, _dir) = test_state();
         let app = dispatch_router(state, stub_proxy());
 
         let req = axum::http::Request::builder()
@@ -213,7 +218,7 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_route_returns_404() {
-        let (state, _rx) = test_state();
+        let (state, _rx, _dir) = test_state();
         let app = dispatch_router(state, stub_proxy());
 
         let req = axum::http::Request::builder()
@@ -232,7 +237,7 @@ mod tests {
 
     #[tokio::test]
     async fn non_control_host_returns_502() {
-        let (state, _rx) = test_state();
+        let (state, _rx, _dir) = test_state();
         let app = dispatch_router(state, stub_proxy());
 
         let req = axum::http::Request::builder()
@@ -247,7 +252,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_host_returns_502() {
-        let (state, _rx) = test_state();
+        let (state, _rx, _dir) = test_state();
         let app = dispatch_router(state, stub_proxy());
 
         let req = axum::http::Request::builder()
@@ -261,7 +266,7 @@ mod tests {
 
     #[tokio::test]
     async fn status_returns_pid_and_port() {
-        let (state, _rx) = test_state();
+        let (state, _rx, _dir) = test_state();
         let app = dispatch_router(state, stub_proxy());
 
         let req = axum::http::Request::builder()
@@ -283,7 +288,7 @@ mod tests {
 
     #[tokio::test]
     async fn reload_returns_ok_with_no_providers() {
-        let (state, _rx) = test_state();
+        let (state, _rx, _dir) = test_state();
         let app = dispatch_router(state, stub_proxy());
 
         let req = axum::http::Request::builder()
