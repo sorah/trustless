@@ -38,10 +38,14 @@
 - Fancy but minimal html pages for humans
   - Error pages
   - Index of hosted pages
+- Find other feature parity
+  - `trustless run` to auto-determine subdomain name
 
 ### Utilities
 
 - `trustless list` to list current routes
+
+### AWS Lambda provider
 
 ### Release Engineering
 
