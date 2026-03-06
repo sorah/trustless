@@ -168,7 +168,7 @@ Scans `cert_dir/certs/*/` directories sorted by name. For each:
 2. Loads `{version}/fullchain.pem` as a string (passed through to protocol as-is)
 3. Loads `{version}/key.pem` via `rustls_pki_types::PrivateKeyDer::from_pem_file()` (PemObject trait)
 4. Parses into a signing key via `rustls::crypto::ring::sign::any_supported_type()`
-5. Certificate ID = `"{domain_dir_name}/{version}"`; domains = `["*.{domain_dir_name}"]`
+5. Certificate ID = `"{domain_dir_name}/{version}"`; domains = DNS SANs extracted from the leaf certificate
 6. First certificate becomes the default
 
 Signing: offers all common TLS signature schemes to `SigningKey::choose_scheme()`, which picks the first compatible one, then calls `Signer::sign()` on the blob.

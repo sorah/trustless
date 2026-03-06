@@ -7,7 +7,8 @@ See docs/internals.md for internal details
 
 ## Rust coding guideline
 
-Always refer to `/sorah-guides:rust` skill.
+- Always refer to `/sorah-guides:rust` skill.
+- Always write unit tests in the same file `#[cfg(test)] mod tests { ... }` style, and integration tests in `tests/` directory.
 
 ### Prior Art for launching proxy and Sorah's rust coding style
 

@@ -10,6 +10,11 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
 rustls-pki-types = { version = "1", features = ["std"] }
+x509-parser = "0.16"
 tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+rcgen = "0.13"
+tempfile = "3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
