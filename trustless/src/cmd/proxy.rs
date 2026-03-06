@@ -148,8 +148,7 @@ async fn serve(
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut sigint = signal(SignalKind::interrupt())?;
 
-    let (close_tx, close_rx) = tokio::sync::watch::channel(());
-    let mut connections = tokio::task::JoinSet::new();
+    let graceful = hyper_util::server::graceful::GracefulShutdown::new();
 
     let shutdown = async {
         tokio::select! {
@@ -168,48 +167,13 @@ async fn serve(
                     continue;
                 }
             };
-
-            let acceptor = tls_acceptor.clone();
-            let app = app.clone();
-            let close_rx = close_rx.clone();
-
-            connections.spawn(async move {
-                let tls_stream = match acceptor.accept(stream).await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        tracing::debug!(addr = %addr, error = %e, "TLS handshake failed");
-                        return;
-                    }
-                };
-
-                let io = hyper_util::rt::TokioIo::new(tls_stream);
-                let app = app.layer(axum::Extension(crate::proxy::ClientAddr(addr)));
-                let service = hyper_util::service::TowerToHyperService::new(app);
-
-                let builder = hyper_util::server::conn::auto::Builder::new(
-                    hyper_util::rt::TokioExecutor::new(),
-                );
-                let conn = builder.serve_connection(io, service);
-
-                // Use graceful shutdown on connection
-                let conn = conn.into_owned();
-                tokio::pin!(conn);
-
-                let mut close_rx = close_rx;
-                loop {
-                    tokio::select! {
-                        result = conn.as_mut() => {
-                            if let Err(e) = result {
-                                tracing::debug!(addr = %addr, error = %e, "Connection error");
-                            }
-                            break;
-                        }
-                        _ = close_rx.changed() => {
-                            conn.as_mut().graceful_shutdown();
-                        }
-                    }
-                }
-            });
+            tokio::spawn(handle_connection(
+                tls_acceptor.clone(),
+                stream,
+                addr,
+                app.clone(),
+                graceful.watcher(),
+            ));
         }
     };
 
@@ -218,13 +182,9 @@ async fn serve(
         _ = accept_loop => unreachable!(),
     }
 
-    // Drain: signal all connections to graceful shutdown, wait up to 30s
+    // Drain with timeout
     tracing::info!("Shutting down, draining connections...");
-    drop(close_rx);
-    let _ = close_tx.send(());
-
-    let drain = async { while connections.join_next().await.is_some() {} };
-    if tokio::time::timeout(std::time::Duration::from_secs(30), drain)
+    if tokio::time::timeout(std::time::Duration::from_secs(30), graceful.shutdown())
         .await
         .is_err()
     {
@@ -232,6 +192,34 @@ async fn serve(
     }
 
     Ok(())
+}
+
+async fn handle_connection(
+    acceptor: tokio_rustls::TlsAcceptor,
+    stream: tokio::net::TcpStream,
+    addr: std::net::SocketAddr,
+    app: axum::Router,
+    watcher: hyper_util::server::graceful::Watcher,
+) {
+    let tls_stream = match acceptor.accept(stream).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::debug!(addr = %addr, error = %e, "TLS handshake failed");
+            return;
+        }
+    };
+
+    let io = hyper_util::rt::TokioIo::new(tls_stream);
+    let app = app.layer(axum::Extension(crate::proxy::ClientAddr(addr)));
+    let service = hyper_util::service::TowerToHyperService::new(app);
+
+    let conn = hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new())
+        .serve_connection(io, service)
+        .into_owned();
+
+    if let Err(e) = watcher.watch(conn).await {
+        tracing::debug!(addr = %addr, error = %e, "Connection error");
+    }
 }
 
 async fn check_existing_proxy(force: bool) -> anyhow::Result<()> {
