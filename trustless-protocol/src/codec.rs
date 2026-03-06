@@ -117,6 +117,7 @@ mod tests {
                 id: i,
                 body: crate::message::RequestBody::Sign(crate::message::SignParams {
                     certificate_id: format!("cert{i}"),
+                    scheme: "ECDSA_NISTP256_SHA256".to_owned(),
                     blob: vec![i as u8; 16],
                 }),
             };

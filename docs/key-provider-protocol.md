@@ -52,7 +52,8 @@ __Response:__
             {
                 "id": "cert1",
                 "domains": ["*.lo.myteam.invalid"],
-                "pem": "PEM string(s)"
+                "pem": "PEM string(s)",
+                "schemes": ["RSA_PSS_SHA256", "RSA_PSS_SHA384", "RSA_PKCS1_SHA256"]
             },
             ...
         ]
@@ -60,11 +61,13 @@ __Response:__
 }
 ```
 
+`.certificates.schemes` lists the signature schemes the provider supports for this certificate's key. Scheme names follow rustls `SignatureScheme` variant names (e.g., `RSA_PSS_SHA256`, `ECDSA_NISTP256_SHA256`, `ED25519`). The field is optional for backward compatibility; when absent, it defaults to an empty list.
+
 `.certificates.id` is encouraged to be dynamic, rotated after certificate/key renewal. It is used in `sign` method, so providers can reject operation on expired keys and inform user to reload the proxy to retrieve updated certificates.
 
 ### `sign`
 
-Sign the given blob with the key corresponding to the specified certificate.
+Sign the given blob with the key corresponding to the specified certificate. The `scheme` field specifies the signature scheme to use (e.g., `RSA_PSS_SHA256`, `ECDSA_NISTP256_SHA256`). The provider must use exactly the requested scheme for signing.
 
 __Request:__
 
@@ -73,6 +76,7 @@ __Request:__
     "method": "sign",
     "params": {
         "certificate_id": "cert1",
+        "scheme": "RSA_PSS_SHA256",
         "blob": "base64 string"
     }
 }

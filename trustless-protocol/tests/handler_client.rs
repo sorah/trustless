@@ -13,6 +13,7 @@ impl trustless_protocol::handler::Handler for TestHandler {
                 id: "test/v1".to_owned(),
                 domains: vec!["*.test.example".to_owned()],
                 pem: "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----".to_owned(),
+                schemes: vec!["ECDSA_NISTP256_SHA256".to_owned()],
             }],
         })
     }
@@ -133,6 +134,7 @@ async fn handler_round_trip() {
             body: trustless_protocol::message::RequestBody::Sign(
                 trustless_protocol::message::SignParams {
                     certificate_id: "test/v1".to_owned(),
+                    scheme: "ECDSA_NISTP256_SHA256".to_owned(),
                     blob: vec![1, 2, 3, 4],
                 },
             ),
@@ -159,6 +161,7 @@ async fn handler_round_trip() {
             body: trustless_protocol::message::RequestBody::Sign(
                 trustless_protocol::message::SignParams {
                     certificate_id: "nonexistent".to_owned(),
+                    scheme: "ECDSA_NISTP256_SHA256".to_owned(),
                     blob: vec![0xff],
                 },
             ),

@@ -23,6 +23,7 @@ pub struct InitializeParams {}
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct SignParams {
     pub certificate_id: String,
+    pub scheme: String,
     #[serde_as(as = "serde_with::base64::Base64")]
     pub blob: Vec<u8>,
 }
@@ -58,6 +59,8 @@ pub struct CertificateInfo {
     pub id: String,
     pub domains: Vec<String>,
     pub pem: String,
+    #[serde(default)]
+    pub schemes: Vec<String>,
 }
 
 #[serde_as]
@@ -87,6 +90,7 @@ mod tests {
             id: 42,
             body: super::RequestBody::Sign(super::SignParams {
                 certificate_id: "cert/v1".to_owned(),
+                scheme: "ECDSA_NISTP256_SHA256".to_owned(),
                 blob: vec![0xde, 0xad, 0xbe, 0xef],
             }),
         };
@@ -94,6 +98,7 @@ mod tests {
         assert_eq!(json["id"], 42);
         assert_eq!(json["method"], "sign");
         assert_eq!(json["params"]["certificate_id"], "cert/v1");
+        assert_eq!(json["params"]["scheme"], "ECDSA_NISTP256_SHA256");
         // base64 of [0xde, 0xad, 0xbe, 0xef]
         assert_eq!(json["params"]["blob"], "3q2+7w==");
     }
@@ -108,12 +113,13 @@ mod tests {
 
     #[test]
     fn deserialize_sign_request() {
-        let json = r#"{"id":7,"method":"sign","params":{"certificate_id":"c1","blob":"AQID"}}"#;
+        let json = r#"{"id":7,"method":"sign","params":{"certificate_id":"c1","scheme":"ED25519","blob":"AQID"}}"#;
         let req: super::Request = serde_json::from_str(json).unwrap();
         assert_eq!(req.id, 7);
         match req.body {
             super::RequestBody::Sign(params) => {
                 assert_eq!(params.certificate_id, "c1");
+                assert_eq!(params.scheme, "ED25519");
                 assert_eq!(params.blob, vec![1, 2, 3]);
             }
             _ => panic!("expected Sign"),
@@ -131,6 +137,7 @@ mod tests {
                         id: "cert1".to_owned(),
                         domains: vec!["*.example.com".to_owned()],
                         pem: "PEM DATA".to_owned(),
+                        schemes: vec!["ECDSA_NISTP256_SHA256".to_owned()],
                     }],
                 },
             },
@@ -211,6 +218,7 @@ mod tests {
     fn sign_params_blob_round_trip() {
         let params = super::SignParams {
             certificate_id: "x".to_owned(),
+            scheme: "RSA_PSS_SHA256".to_owned(),
             blob: (0..=255).collect(),
         };
         let json = serde_json::to_string(&params).unwrap();

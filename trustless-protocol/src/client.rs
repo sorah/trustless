@@ -52,12 +52,14 @@ impl ProviderClient {
     pub async fn sign(
         &self,
         certificate_id: &str,
+        scheme: &str,
         blob: &[u8],
     ) -> Result<Vec<u8>, crate::error::Error> {
         let result: crate::message::SignResult = self
             .call(crate::message::RequestBody::Sign(
                 crate::message::SignParams {
                     certificate_id: certificate_id.to_owned(),
+                    scheme: scheme.to_owned(),
                     blob: blob.to_vec(),
                 },
             ))

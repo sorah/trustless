@@ -8,15 +8,22 @@ license = "Apache-2.0"
 trustless-protocol = { path = "../trustless-protocol" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
+rustls-pki-types = { version = "1", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
+tokio-rustls = "0.26"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
 [dev-dependencies]
+rcgen = "0.13"
 tempfile = "3"
 
 [[example]]
 name = "provider_client"
+
+[[example]]
+name = "tls_server"

@@ -3,6 +3,7 @@ struct Certificate {
     domains: Vec<String>,
     fullchain_pem: String,
     signing_key: std::sync::Arc<dyn rustls::sign::SigningKey>,
+    schemes: Vec<rustls::SignatureScheme>,
 }
 
 fn dns_sans_from_pem(fullchain_pem: &str) -> anyhow::Result<Vec<String>> {
@@ -41,11 +42,29 @@ impl Certificate {
         let signing_key = rustls::crypto::ring::sign::any_supported_type(&key_der)
             .map_err(|e| anyhow::anyhow!("failed to parse signing key: {e}"))?;
 
+        let all_schemes = &[
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+            rustls::SignatureScheme::RSA_PSS_SHA384,
+            rustls::SignatureScheme::RSA_PSS_SHA512,
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::ED25519,
+        ];
+        let schemes: Vec<rustls::SignatureScheme> = all_schemes
+            .iter()
+            .filter(|s| signing_key.choose_scheme(&[**s]).is_some())
+            .copied()
+            .collect();
+
         Ok(Self {
             id,
             domains,
             fullchain_pem,
             signing_key,
+            schemes,
         })
     }
 }
@@ -125,6 +144,11 @@ impl trustless_protocol::handler::Handler for StubHandler {
                 id: c.id.clone(),
                 domains: c.domains.clone(),
                 pem: c.fullchain_pem.clone(),
+                schemes: c
+                    .schemes
+                    .iter()
+                    .map(|s| trustless_protocol::scheme::scheme_to_string(*s).to_owned())
+                    .collect(),
             })
             .collect();
 
@@ -148,25 +172,22 @@ impl trustless_protocol::handler::Handler for StubHandler {
                 message: format!("certificate not found: {}", params.certificate_id),
             })?;
 
-        // Offer all common schemes; the signing key picks the first it supports
-        let schemes = &[
-            rustls::SignatureScheme::RSA_PSS_SHA256,
-            rustls::SignatureScheme::RSA_PSS_SHA384,
-            rustls::SignatureScheme::RSA_PSS_SHA512,
-            rustls::SignatureScheme::RSA_PKCS1_SHA256,
-            rustls::SignatureScheme::RSA_PKCS1_SHA384,
-            rustls::SignatureScheme::RSA_PKCS1_SHA512,
-            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
-            rustls::SignatureScheme::ED25519,
-        ];
-
-        let signer = cert.signing_key.choose_scheme(schemes).ok_or_else(|| {
-            trustless_protocol::message::ErrorPayload {
+        let requested_scheme = trustless_protocol::scheme::parse_scheme(&params.scheme)
+            .ok_or_else(|| trustless_protocol::message::ErrorPayload {
                 code: 2,
-                message: "no compatible signature scheme".to_owned(),
-            }
-        })?;
+                message: format!("unknown signature scheme: {}", params.scheme),
+            })?;
+
+        let signer = cert
+            .signing_key
+            .choose_scheme(&[requested_scheme])
+            .ok_or_else(|| trustless_protocol::message::ErrorPayload {
+                code: 2,
+                message: format!(
+                    "unsupported signature scheme for this certificate: {}",
+                    params.scheme,
+                ),
+            })?;
 
         let signature =
             signer

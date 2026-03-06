@@ -28,8 +28,15 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    eprintln!("calling sign with default certificate...");
-    let signature = client.sign(&init.default, b"hello test").await?;
+    let scheme = init
+        .certificates
+        .iter()
+        .find(|c| c.id == init.default)
+        .and_then(|c| c.schemes.first())
+        .cloned()
+        .unwrap_or_else(|| "RSA_PSS_SHA256".to_owned());
+    eprintln!("calling sign with default certificate (scheme={scheme})...");
+    let signature = client.sign(&init.default, &scheme, b"hello test").await?;
     eprintln!("signature ({} bytes): {}", signature.len(), hex(&signature));
 
     eprintln!("success!");

@@ -20,9 +20,15 @@ impl Default for Config {
     }
 }
 
+pub fn default_sign_timeout_seconds() -> u64 {
+    15
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct Profile {
     pub command: Vec<String>,
+    #[serde(default = "default_sign_timeout_seconds")]
+    pub sign_timeout_seconds: u64,
 }
 
 pub fn config_dir() -> std::path::PathBuf {
@@ -107,6 +113,7 @@ mod tests {
                 "--cert-dir".into(),
                 "/tmp/certs".into(),
             ],
+            sign_timeout_seconds: default_sign_timeout_seconds(),
         };
         config.save_profile("test", &profile).unwrap();
         let loaded = config.load_profile("test").unwrap();

@@ -12,6 +12,7 @@ pub fn run(args: &SetupArgs) -> anyhow::Result<()> {
     let config = crate::config::Config::load()?;
     let profile = crate::config::Profile {
         command: args.command.clone(),
+        sign_timeout_seconds: crate::config::default_sign_timeout_seconds(),
     };
     config.save_profile(&args.profile, &profile)?;
     eprintln!("trustless: saved profile '{}'", args.profile);

@@ -148,7 +148,7 @@ The signing thread exits when all `SigningThreadHandle` clones are dropped (chan
 
 **`CertResolverEntry`** — Internal struct used by `ProviderRegistry`.
 
-- `domains: Vec<String>`, `certified_key: Arc<CertifiedKey>`
+- `id: String`, `domains: Vec<String>`, `certified_key: Arc<CertifiedKey>`
 
 **Certificate parsing** (in `ProviderRegistry::add_provider`):
 
@@ -232,36 +232,43 @@ A minimal TLS server that accepts connections and responds with a fixed HTTP 200
 
 ## Current Status
 
-Spec complete. Ready for implementation.
+Validation complete. Implementation matches spec.
 
 ### Checklist
 
-- [ ] **Protocol extension** (`trustless-protocol`):
-  - [ ] Add `rustls = { version = "0.23", default-features = false, features = ["std"] }` to `trustless-protocol/Cargo.toml`
-  - [ ] Add `schemes: Vec<String>` to `CertificateInfo` in `message.rs`
-  - [ ] Add `scheme` module with `parse_scheme` / `scheme_to_string` / `algorithm_for_schemes` helpers
-  - [ ] Unit tests for scheme parsing round-trips
-- [ ] **Stub provider update** (`trustless-provider-stub`):
-  - [ ] Populate `schemes` field in `CertificateInfo` based on key type
-- [ ] **Protocol documentation**:
-  - [ ] Update `docs/key-provider-protocol.md` with `schemes` field in initialize response
-- [ ] **Signer module** (`trustless/src/signer.rs`):
-  - [ ] `SigningThread` + `SigningThreadHandle` (background thread, std::sync::mpsc channels)
-  - [ ] `RemoteSigningKey` (implements `rustls::crypto::signer::SigningKey`)
-  - [ ] `RemoteSigner` (implements `rustls::crypto::signer::Signer`)
-  - [ ] `ProviderRegistry` (Arc<RwLock> orchestrator, add_provider, resolve_by_sni)
-  - [ ] `CertResolver` (implements `rustls::server::ResolvesServerCert`, delegates to registry)
-  - [ ] Wildcard domain matching
-  - [ ] Unit tests: wildcard matching, exact matching, scheme parsing, algorithm inference
-- [ ] **Dependencies** (`trustless/Cargo.toml`):
-  - [ ] Add `rustls`, `rustls-pki-types`, `tokio-rustls`
-- [ ] **Integration test** (`trustless/tests/signer.rs`):
-  - [ ] Spawn stub provider → initialize → add to registry → verify SNI resolution
-  - [ ] Full TLS handshake with rustls client
-- [ ] **Example** (`trustless/examples/tls_server.rs`):
-  - [ ] Minimal TLS server with fixed HTTP 200 response
-- [ ] `cargo clippy --workspace` passes
+- [x] **Protocol extension** (`trustless-protocol`):
+  - [x] Add `rustls = { version = "0.23", default-features = false, features = ["std"] }` to `trustless-protocol/Cargo.toml`
+  - [x] Add `schemes: Vec<String>` to `CertificateInfo` in `message.rs`
+  - [x] Add `scheme` module with `parse_scheme` / `scheme_to_string` / `algorithm_for_schemes` helpers
+  - [x] Unit tests for scheme parsing round-trips
+- [x] **Stub provider update** (`trustless-provider-stub`):
+  - [x] Populate `schemes` field in `CertificateInfo` based on key type
+- [x] **Protocol documentation**:
+  - [x] Update `docs/key-provider-protocol.md` with `schemes` field in initialize response
+- [x] **Signer module** (`trustless/src/signer.rs`):
+  - [x] `SigningThread` + `SigningThreadHandle` (background thread, std::sync::mpsc channels)
+  - [x] `RemoteSigningKey` (implements `rustls::crypto::signer::SigningKey`)
+  - [x] `RemoteSigner` (implements `rustls::crypto::signer::Signer`)
+  - [x] `ProviderRegistry` (Arc<RwLock> orchestrator, add_provider, resolve_by_sni)
+  - [x] `CertResolver` (implements `rustls::server::ResolvesServerCert`, delegates to registry)
+  - [x] Wildcard domain matching
+  - [x] Unit tests: wildcard matching, exact matching, scheme parsing, algorithm inference
+- [x] **Dependencies** (`trustless/Cargo.toml`):
+  - [x] Add `rustls`, `rustls-pki-types`, `tokio-rustls`
+- [x] **Integration test** (`trustless/tests/signer.rs`):
+  - [x] Spawn stub provider → initialize → add to registry → verify SNI resolution
+  - [x] Full TLS handshake with rustls client
+- [x] **Example** (`trustless/examples/tls_server.rs`):
+  - [x] Minimal TLS server with fixed HTTP 200 response
+- [x] `cargo clippy --workspace` passes
+
+### Discrepancies
+
+- **Default certificate fallback ignores `InitializeResult.default` ID** — Spec prose says "Falls back to the default certificate (as specified by `InitializeResult.default`)", but `CertResolverEntry` had no `id` field. Implementation stored `default_id` on `ProviderEntry` but `resolve_by_sni` always returned the first certificate. Resolution: fixed — added `id` to `CertResolverEntry`, `resolve_by_sni` now looks up by `default_id`. Spec updated to include `id` field.
 
 ### Updates
 
-Implementors MUST keep this section updated as they work.
+- 2026-03-06: Completed protocol extension — added `schemes` field to `CertificateInfo`, created `scheme` module with parsing helpers and unit tests. Updated stub provider to probe signing key capabilities and populate `schemes`. Updated protocol documentation.
+- 2026-03-06: Completed signer module — `SigningThread`, `RemoteSigningKey`, `RemoteSigner`, `ProviderRegistry`, `CertResolver` with wildcard matching. Added rustls/tokio-rustls/rustls-pki-types deps.
+- 2026-03-06: Completed integration tests (SNI resolution + full TLS handshake) and tls_server example. Note: tests require `multi_thread` tokio runtime since `Signer::sign()` blocks the calling thread while the signing thread uses `Handle::block_on()`. All tests pass, clippy clean.
+- 2026-03-06: Validation complete. One discrepancy found and fixed: `resolve_by_sni` default fallback now properly looks up by `InitializeResult.default` ID instead of always returning the first certificate. Added `id` field to `CertResolverEntry`.
