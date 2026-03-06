@@ -36,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let registry = trustless::signer::ProviderRegistry::new();
+    let registry = trustless::provider::ProviderRegistry::new();
     registry.add_provider(init, handle)?;
 
     let resolver = trustless::signer::CertResolver::new(registry);
