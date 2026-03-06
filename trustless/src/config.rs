@@ -62,6 +62,18 @@ pub fn state_dir() -> std::path::PathBuf {
     }
 }
 
+pub fn state_dir_mkpath() -> std::io::Result<std::path::PathBuf> {
+    let dir = state_dir();
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+pub fn log_dir_mkpath() -> std::io::Result<std::path::PathBuf> {
+    let dir = state_dir().join("log");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
 impl Config {
     pub fn load() -> Result<Self, crate::Error> {
         Self::load_from(config_dir())
