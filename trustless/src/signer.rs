@@ -48,6 +48,16 @@ impl std::fmt::Debug for SigningThreadHandle {
 }
 
 impl SigningThreadHandle {
+    /// Create a disconnected handle for use in tests and placeholder entries.
+    /// Any sign request will fail with "signing thread gone".
+    pub fn disconnected() -> Self {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        Self {
+            tx,
+            timeout: std::time::Duration::from_secs(1),
+        }
+    }
+
     pub fn sign(
         &self,
         certificate_id: &str,

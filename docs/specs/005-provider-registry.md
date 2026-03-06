@@ -250,45 +250,58 @@ No integration test for the full orchestrator restart loop — orchestrator is c
 
 ## Current Status
 
-Interview complete. Ready for implementation.
+Implementation complete.
 
 ### Checklist
 
 Implementors MUST keep this section updated as they work.
 
-- [ ] **ProviderProcess** (`trustless-protocol/src/process.rs`, new):
-  - [ ] `ProviderProcess` struct with `client`, `stderr`, `child` fields
-  - [ ] `spawn()`, `wait()`, `signal()`, `kill()` methods
-  - [ ] `ProviderClient::from_child_io()` constructor
-  - [ ] Remove `ProviderClient::spawn()` and `ProviderClient::kill()`
-  - [ ] Update existing tests and callers
-- [ ] **ProviderRegistry** (`trustless/src/provider.rs`, already exists from prep):
-  - [ ] ~~Move `ProviderRegistry`, `ProviderEntry`, `CertResolverEntry` from `signer.rs`~~ (done in prep)
-  - [ ] Add `replace_provider(name, init, handle)` for atomic cert swap
-  - [ ] Add `ProviderState` enum (`Running`, `Restarting`, `Failed`) per provider
-  - [ ] Add error tracking: `ProviderError` struct, FIFO ring (10 entries), `push_error()`, `errors()` query
-  - [ ] Add `ProviderErrorKind` enum (`Crash`, `InitFailure`, `ProtocolError`)
-  - [ ] Unit tests: replace_provider, error FIFO, state tracking
-- [ ] **ProviderSession** (`trustless/src/provider.rs`):
-  - [ ] Struct wrapping `Arc<ProviderClient>`, `SigningThreadHandle`, stderr ring buffer
-- [ ] **ProviderOrchestrator** (`trustless/src/provider.rs`):
-  - [ ] Arc-wrapped, Clone
-  - [ ] `new(registry)`, `add_provider(name, profile)`, `restart_provider(name)`, `shutdown()`
-  - [ ] Supervisor task per provider: select! on child.wait / CancellationToken / mpsc commands
-  - [ ] Exponential backoff (1s min, 5m max, 2x, reset after 60s healthy)
-  - [ ] Stderr reader task (100-line ring buffer, forward to tracing at warn)
-  - [ ] Shutdown: SIGTERM → wait 20s → SIGKILL
+- [x] **ProviderProcess** (`trustless-protocol/src/process.rs`, new):
+  - [x] `ProviderProcess` struct with `client`, `stderr`, `child` fields
+  - [x] `spawn()`, `wait()`, `signal()`, `kill()` methods
+  - [x] `ProviderClient::from_child_io()` constructor
+  - [x] Remove `ProviderClient::spawn()` and `ProviderClient::kill()`
+  - [x] Update existing tests and callers
+- [x] **ProviderRegistry** (`trustless/src/provider.rs`, already exists from prep):
+  - [x] ~~Move `ProviderRegistry`, `ProviderEntry`, `CertResolverEntry` from `signer.rs`~~ (done in prep)
+  - [x] Add `replace_provider(name, init, handle)` for atomic cert swap
+  - [x] Add `ProviderState` enum (`Running`, `Restarting`, `Failed`) per provider
+  - [x] Add error tracking: `ProviderError` struct, FIFO ring (10 entries), `push_error()`, `errors()` query
+  - [x] Add `ProviderErrorKind` enum (`Crash`, `InitFailure`, `ProtocolError`)
+  - [x] Unit tests: replace_provider, error FIFO, state tracking
+- [x] **ProviderSession** (`trustless/src/provider.rs`):
+  - [x] Struct wrapping `Arc<ProviderClient>`, `SigningThreadHandle`, stderr ring buffer
+- [x] **ProviderOrchestrator** (`trustless/src/provider.rs`):
+  - [x] Arc-wrapped, Clone
+  - [x] `new(registry)`, `add_provider(name, profile)`, `restart_provider(name)`, `shutdown()`
+  - [x] Supervisor task per provider: select! on child.wait / CancellationToken / mpsc commands
+  - [x] Exponential backoff (1s min, 5m max, 2x, reset after 60s healthy)
+  - [x] Stderr reader task (100-line ring buffer, forward to tracing at warn)
+  - [x] Shutdown: SIGTERM → wait 20s → SIGKILL
   - [ ] Unit tests with mocked ProviderProcess
-- [ ] **Signer module update** (`trustless/src/signer.rs`):
-  - [ ] ~~Remove `ProviderRegistry` and related types (moved to provider.rs)~~ (done in prep)
-  - [ ] Verify imports are clean, keep SigningThread/RemoteSigningKey/RemoteSigner/CertResolver
-- [ ] **Dependencies**:
-  - [ ] Add `tokio-util` with `sync` feature to `trustless/Cargo.toml`
-- [ ] **Integration tests** (`trustless/tests/`):
-  - [ ] Update `signer.rs` tests for `ProviderProcess::spawn()` API
-  - [ ] Verify ProviderProcess spawn + initialize + sign with provider-stub
-- [ ] **Example** (`trustless/examples/tls_server.rs`):
-  - [ ] Update to use `ProviderOrchestrator` API
-- [ ] `cargo clippy --workspace` passes
+- [x] **Signer module update** (`trustless/src/signer.rs`):
+  - [x] ~~Remove `ProviderRegistry` and related types (moved to provider.rs)~~ (done in prep)
+  - [x] Verify imports are clean, keep SigningThread/RemoteSigningKey/RemoteSigner/CertResolver
+- [x] **Dependencies**:
+  - [x] Add `tokio-util` to `trustless/Cargo.toml` (sync feature not needed in 0.7.18 — CancellationToken always available)
+  - [x] Add `libc` to `trustless/Cargo.toml` and `trustless-protocol/Cargo.toml` (for SIGTERM)
+- [x] **Integration tests** (`trustless/tests/`):
+  - [x] Update `signer.rs` tests for `ProviderProcess::spawn()` API
+  - [x] Verify ProviderProcess spawn + initialize + sign with provider-stub
+- [x] **Example** (`trustless/examples/tls_server.rs`):
+  - [x] Update to use `ProviderOrchestrator` API
+- [x] `cargo clippy --workspace` passes
 
 ### Updates
+
+**2026-03-07**: Implementation complete.
+
+- **ProviderProcess**: New `trustless-protocol/src/process.rs` with `spawn()`, `wait()`, `signal()` (unix-only via libc), `kill()`, and `into_parts()` for decomposing into client/stderr/child when separate ownership is needed.
+- **ProviderClient**: Removed `spawn()` and `kill()`, replaced with `from_child_io(stdin, stdout)`. Process lifecycle now owned by `ProviderProcess`.
+- **ProviderRegistry**: Changed internal storage from `Vec<ProviderEntry>` to `HashMap<String, ProviderEntry>` keyed by provider name. Added `replace_provider()` for atomic cert swap, `ProviderState` enum, error tracking with FIFO ring (10 entries), `push_error()`/`errors()`/`set_provider_state()`/`provider_state()` methods. Extracted `parse_init_result()` helper to share between `add_provider()` and `replace_provider()`.
+- **ProviderSession**: Struct wrapping `Arc<ProviderClient>`, `SigningThreadHandle`, and stderr ring buffer.
+- **ProviderOrchestrator**: Arc-wrapped Clone struct. `add_provider()` spawns + initializes synchronously, then starts a supervisor task. Supervisor uses `tokio::select!` on child.wait / CancellationToken / mpsc commands. Exponential backoff (1s→5m, 2x, reset after 60s healthy). Stderr reader task (100-line ring buffer, forwarded to tracing at warn). `restart_provider()` kills current process and respawns with backoff reset, returning only after re-initialization. `shutdown()` sends SIGTERM, waits 20s, then SIGKILL.
+- **SigningThreadHandle**: Added `disconnected()` constructor for tests/placeholder entries.
+- **Dependencies**: Added `tokio-util` (0.7) and `libc` (0.2) to trustless crate; added `libc` (0.2) to trustless-protocol crate.
+- **Tests**: All existing tests updated for ProviderProcess API. New unit tests: `replace_provider_swaps_atomically`, `error_fifo_respects_capacity`, `error_entry_fields`, `provider_state_tracking`, `backoff_calculation`.
+- **Note**: Unit tests for ProviderOrchestrator with mocked ProviderProcess are deferred — the orchestrator's supervisor loop directly calls `ProviderProcess::spawn()` which is hard to mock without trait abstraction. The orchestrator is covered by the integration tests via real provider-stub processes.

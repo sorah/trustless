@@ -46,11 +46,11 @@ async fn spawn_provider_and_resolve_sni() {
     );
 
     let command = stub_provider_command(dir.path());
-    let client = std::sync::Arc::new(
-        trustless_protocol::client::ProviderClient::spawn(&command)
-            .await
-            .unwrap(),
-    );
+    let process = trustless_protocol::process::ProviderProcess::spawn(&command)
+        .await
+        .unwrap();
+    let (client, _stderr, mut child) = process.into_parts();
+    let client = std::sync::Arc::new(client);
 
     let handle = trustless::signer::SigningThread::start(
         tokio::runtime::Handle::current(),
@@ -78,7 +78,7 @@ async fn spawn_provider_and_resolve_sni() {
     let resolved = registry.resolve_by_sni(None);
     assert!(resolved.is_some());
 
-    client.kill().await.unwrap();
+    child.kill().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -89,11 +89,11 @@ async fn full_tls_handshake() {
     let (dir, cert) = setup_cert_dir("localhost", vec!["localhost".to_owned()]);
 
     let command = stub_provider_command(dir.path());
-    let client = std::sync::Arc::new(
-        trustless_protocol::client::ProviderClient::spawn(&command)
-            .await
-            .unwrap(),
-    );
+    let process = trustless_protocol::process::ProviderProcess::spawn(&command)
+        .await
+        .unwrap();
+    let (client, _stderr, mut child) = process.into_parts();
+    let client = std::sync::Arc::new(client);
 
     let handle = trustless::signer::SigningThread::start(
         tokio::runtime::Handle::current(),
@@ -153,5 +153,5 @@ async fn full_tls_handshake() {
     server_result.unwrap();
     client_result.unwrap();
 
-    client.kill().await.unwrap();
+    child.kill().await.unwrap();
 }
