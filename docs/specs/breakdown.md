@@ -10,19 +10,12 @@
 - **006: Proxy Lifecycle & Control API** — `trustless::control`, `trustless proxy start/stop` ([spec](006-proxy-lifecycle.md))
 - **TLS server** — HTTPS listener, HTTP/2, TLS 1.2/1.3 configuration (`f701a51`)
 
-### Wiring up 004,005,006
-
-- `src/cmd/proxy.rs` to do:
-    - Start the provider registry (005)
-    - Run the proxy service (004) and the control API (006)
-    - Accept TLS connections, terminate TLS using the remote signer from the provider registry
-
 ### Proxy control API
 
 - Self-signed ephemeral cert for CLI-to-proxy HTTPS API (as described in `docs/internal.md`)
 - `trustless proxy stop` — stop proxy process
 - Proxy reload (restart provider, re-initialize certs)
-- `trustless proxy status` — show proxy status, active mappings, provider error status
+- `trustless status` — show proxy status, active mappings, provider error status, provider certificate domains.
 
 ### `trustless exec`
 
@@ -41,11 +34,11 @@
 - Find other feature parity
   - `trustless run` to auto-determine subdomain name
 
+### AWS Lambda provider
+
 ### Utilities
 
-- `trustless list` to list current routes
-
-### AWS Lambda provider
+- Lazy launch of provider?
 
 ### Release Engineering
 
