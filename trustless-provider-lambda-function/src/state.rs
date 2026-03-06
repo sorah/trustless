@@ -43,8 +43,6 @@ impl AppState {
     }
 
     async fn get_passphrase(&self) -> Result<&secrecy::SecretString, AppError> {
-        use secrecy::ExposeSecret as _;
-
         self.ssm_passphrase
             .get_or_try_init(|| async {
                 let arn = self.config.key_passphrase_ssm_arn.as_ref().ok_or_else(|| {
