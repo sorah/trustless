@@ -22,11 +22,16 @@ fn stub_provider_binary() -> std::path::PathBuf {
     path.pop(); // remove the test binary name
     path.pop(); // remove "deps"
     path.push("trustless-provider-stub");
-    assert!(
-        path.exists(),
-        "stub provider binary not found at {}; run `cargo build -p trustless-provider-stub` first",
-        path.display()
-    );
+    if !path.exists() {
+        let status = std::process::Command::new(env!("CARGO"))
+            .args(["build", "-p", "trustless-provider-stub"])
+            .status()
+            .expect("failed to run cargo build");
+        assert!(
+            status.success(),
+            "cargo build -p trustless-provider-stub failed"
+        );
+    }
     path
 }
 
