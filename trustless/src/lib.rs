@@ -1,6 +1,8 @@
 pub mod cmd;
 pub mod config;
 pub mod provider;
+pub mod proxy;
+pub mod route;
 pub mod signer;
 
 #[derive(thiserror::Error, Debug)]

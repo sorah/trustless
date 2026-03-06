@@ -7,25 +7,36 @@ license = "Apache-2.0"
 [dependencies]
 trustless-protocol = { path = "../trustless-protocol" }
 anyhow = "1"
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 clap = { version = "4", features = ["derive"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
 rustls-pki-types = { version = "1", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+parking_lot = "0.12"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 tokio-rustls = "0.26"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+http = "1"
+bytes = "1"
 
 [dev-dependencies]
 rcgen = "0.13"
 tempfile = "3"
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
 
 [[example]]
 name = "provider_client"
+
+[[example]]
+name = "proxy"
 
 [[example]]
 name = "tls_server"
