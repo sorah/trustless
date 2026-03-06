@@ -46,7 +46,7 @@ async fn spawn_provider_and_resolve_sni() {
     );
 
     let command = stub_provider_command(dir.path());
-    let process = trustless_protocol::process::ProviderProcess::spawn(&command)
+    let process = trustless::provider::process::ProviderProcess::spawn(&command)
         .await
         .unwrap();
     let (client, _stderr, mut child) = process.into_parts();
@@ -88,7 +88,7 @@ async fn full_tls_handshake() {
     let (dir, cert) = setup_cert_dir("localhost", vec!["localhost".to_owned()]);
 
     let command = stub_provider_command(dir.path());
-    let process = trustless_protocol::process::ProviderProcess::spawn(&command)
+    let process = trustless::provider::process::ProviderProcess::spawn(&command)
         .await
         .unwrap();
     let (client, _stderr, mut child) = process.into_parts();

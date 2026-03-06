@@ -1,4 +1,5 @@
 pub mod orchestrator;
+pub mod process;
 pub mod registry;
 mod supervisor;
 
@@ -97,7 +98,7 @@ pub struct ProviderStatusInfo {
 
 /// Represents one lifecycle of a spawned provider process.
 pub struct ProviderSession {
-    pub client: std::sync::Arc<trustless_protocol::client::ProviderClient>,
+    pub client: std::sync::Arc<process::ProviderClient>,
     pub signing_handle: SigningHandle,
     pub stderr_lines: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
 }

@@ -11,7 +11,7 @@ struct SignRequest {
 
 impl SigningWorker {
     pub fn start(
-        client: std::sync::Arc<trustless_protocol::client::ProviderClient>,
+        client: std::sync::Arc<crate::provider::process::ProviderClient>,
         sign_timeout: std::time::Duration,
     ) -> SigningHandle {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SignRequest>();

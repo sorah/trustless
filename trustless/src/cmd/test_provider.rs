@@ -15,7 +15,7 @@ pub struct TestProviderArgs {
 pub async fn run(args: &TestProviderArgs) -> Result<(), anyhow::Error> {
     // Spawn provider
     eprintln!("Spawning provider: {:?}", args.command);
-    let process = trustless_protocol::process::ProviderProcess::spawn(&args.command).await?;
+    let process = crate::provider::process::ProviderProcess::spawn(&args.command).await?;
     let (client, stderr, child) = process.into_parts();
 
     // Forward provider stderr to parent stderr

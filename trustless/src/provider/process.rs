@@ -1,11 +1,16 @@
+pub type ProviderClient = trustless_protocol::client::ProviderClient<
+    tokio::process::ChildStdout,
+    tokio::process::ChildStdin,
+>;
+
 pub struct ProviderProcess {
-    pub client: crate::client::ProviderClient,
+    pub client: ProviderClient,
     pub stderr: tokio::process::ChildStderr,
     child: tokio::process::Child,
 }
 
 impl ProviderProcess {
-    pub async fn spawn(command: &[String]) -> Result<Self, crate::error::Error> {
+    pub async fn spawn(command: &[String]) -> Result<Self, trustless_protocol::error::Error> {
         let mut child = tokio::process::Command::new(&command[0])
             .args(&command[1..])
             .stdin(std::process::Stdio::piped())
@@ -17,7 +22,7 @@ impl ProviderProcess {
         let stdin = child.stdin.take().expect("stdin is piped");
         let stderr = child.stderr.take().expect("stderr is piped");
 
-        let client = crate::client::ProviderClient::from_child_io(stdin, stdout);
+        let client = ProviderClient::new(stdout, stdin);
 
         Ok(Self {
             client,
@@ -44,7 +49,7 @@ impl ProviderProcess {
     pub fn into_parts(
         self,
     ) -> (
-        crate::client::ProviderClient,
+        ProviderClient,
         tokio::process::ChildStderr,
         tokio::process::Child,
     ) {

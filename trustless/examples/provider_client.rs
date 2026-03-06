@@ -14,7 +14,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     eprintln!("spawning provider: {:?}", command);
-    let process = trustless_protocol::process::ProviderProcess::spawn(&command).await?;
+    let process = trustless::provider::process::ProviderProcess::spawn(&command).await?;
     let (client, _stderr, mut child) = process.into_parts();
 
     eprintln!("calling initialize...");

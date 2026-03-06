@@ -17,7 +17,7 @@ pub async fn send_message<W>(
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    use futures::SinkExt as _;
+    use futures_util::SinkExt as _;
 
     let json = serde_json::to_vec(msg)?;
     writer.send(bytes::Bytes::from(json)).await?;
@@ -31,7 +31,7 @@ where
     R: tokio::io::AsyncRead + Unpin,
     M: serde::de::DeserializeOwned,
 {
-    use futures::StreamExt as _;
+    use futures_util::StreamExt as _;
 
     let frame = reader
         .next()

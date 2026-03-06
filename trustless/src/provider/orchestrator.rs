@@ -129,7 +129,7 @@ pub(super) enum SupervisorCommand {
 pub(super) struct SpawnResult {
     pub(super) child: tokio::process::Child,
     #[allow(dead_code)]
-    pub(super) client: std::sync::Arc<trustless_protocol::client::ProviderClient>,
+    pub(super) client: std::sync::Arc<super::process::ProviderClient>,
     #[allow(dead_code)]
     pub(super) signing_handle: SigningHandle,
     pub(super) stderr_lines: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
@@ -145,7 +145,7 @@ pub(super) async fn spawn_init_register(
     profile: &crate::config::Profile,
     registry: &ProviderRegistry,
 ) -> Result<SpawnResult, crate::Error> {
-    let process = trustless_protocol::process::ProviderProcess::spawn(&profile.command).await?;
+    let process = super::process::ProviderProcess::spawn(&profile.command).await?;
     let (client, stderr, child) = process.into_parts();
     let client = std::sync::Arc::new(client);
 
