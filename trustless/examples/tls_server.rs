@@ -16,28 +16,11 @@ async fn main() -> anyhow::Result<()> {
     let profile = config.load_profile("default")?;
 
     eprintln!("spawning provider: {:?}", profile.command);
-    let client = std::sync::Arc::new(
-        trustless_protocol::client::ProviderClient::spawn(&profile.command).await?,
-    );
-
-    let handle = trustless::signer::SigningThread::start(
-        tokio::runtime::Handle::current(),
-        client.clone(),
-        std::time::Duration::from_secs(profile.sign_timeout_seconds),
-    );
-
-    eprintln!("calling initialize...");
-    let init = client.initialize().await?;
-    eprintln!("default certificate: {}", init.default);
-    for cert in &init.certificates {
-        eprintln!(
-            "  id={} domains={:?} schemes={:?}",
-            cert.id, cert.domains, cert.schemes,
-        );
-    }
-
     let registry = trustless::provider::ProviderRegistry::new();
-    registry.add_provider(init, handle)?;
+    let orchestrator = trustless::provider::ProviderOrchestrator::new(registry.clone());
+
+    orchestrator.add_provider("default", profile).await?;
+    eprintln!("provider initialized");
 
     let resolver = trustless::signer::CertResolver::new(registry);
     let server_config = std::sync::Arc::new(

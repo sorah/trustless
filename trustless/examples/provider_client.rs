@@ -14,7 +14,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     eprintln!("spawning provider: {:?}", command);
-    let client = trustless_protocol::client::ProviderClient::spawn(&command).await?;
+    let process = trustless_protocol::process::ProviderProcess::spawn(&command).await?;
+    let (client, _stderr, mut child) = process.into_parts();
 
     eprintln!("calling initialize...");
     let init = client.initialize().await?;
@@ -40,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
     eprintln!("signature ({} bytes): {}", signature.len(), hex(&signature));
 
     eprintln!("success!");
-    client.kill().await?;
+    child.kill().await?;
 
     Ok(())
 }

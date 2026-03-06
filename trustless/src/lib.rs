@@ -16,8 +16,18 @@ pub enum Error {
     Pem(#[from] rustls_pki_types::pem::Error),
     #[error(transparent)]
     Reqwest(#[from] reqwest::Error),
+    #[error(transparent)]
+    Protocol(#[from] trustless_protocol::error::Error),
     #[error("{0}")]
     Control(String),
     #[error("silently exit")]
     SilentlyExitWithCode(std::process::ExitCode),
+    #[error("provider already exists: {0}")]
+    ProviderAlreadyExists(String),
+    #[error("no valid certificates in provider response")]
+    NoCertificates,
+    #[error("provider not found: {0}")]
+    ProviderNotFound(String),
+    #[error("provider supervisor gone: {0}")]
+    ProviderSupervisorGone(String),
 }

@@ -11,33 +11,24 @@ struct ProviderClientInner {
         tokio::process::ChildStdin,
         tokio_util::codec::LengthDelimitedCodec,
     >,
-    child: tokio::process::Child,
     next_id: u64,
 }
 
 impl ProviderClient {
-    pub async fn spawn(command: &[String]) -> Result<Self, crate::error::Error> {
-        let mut child = tokio::process::Command::new(&command[0])
-            .args(&command[1..])
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
-            .spawn()?;
-
-        let stdout = child.stdout.take().expect("stdout is piped");
-        let stdin = child.stdin.take().expect("stdin is piped");
-
+    pub fn from_child_io(
+        stdin: tokio::process::ChildStdin,
+        stdout: tokio::process::ChildStdout,
+    ) -> Self {
         let reader = crate::codec::framed_read(stdout);
         let writer = crate::codec::framed_write(stdin);
 
-        Ok(Self {
+        Self {
             inner: tokio::sync::Mutex::new(ProviderClientInner {
                 reader,
                 writer,
-                child,
                 next_id: 1,
             }),
-        })
+        }
     }
 
     pub async fn initialize(
@@ -97,11 +88,5 @@ impl ProviderClient {
                 })
             }
         }
-    }
-
-    pub async fn kill(&self) -> Result<(), crate::error::Error> {
-        let mut inner = self.inner.lock().await;
-        inner.child.kill().await?;
-        Ok(())
     }
 }
