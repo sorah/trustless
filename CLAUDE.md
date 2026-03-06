@@ -18,6 +18,7 @@ Always refer to `/sorah-guides:rust` skill.
 - `trustless` for CLI and proxy server
 - `trustless-protocol` for protocol utilities
 - `trustless-provider-stub` for testing and example key provider implementation. Refer to given static certificate directory for looking up keys
+  - Use `/home/sorah/tmp/lo` for example certificate registry directory.
 
 ## Referencing library code
 

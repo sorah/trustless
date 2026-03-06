@@ -1,0 +1,105 @@
+pub struct ProviderClient {
+    inner: tokio::sync::Mutex<ProviderClientInner>,
+}
+
+struct ProviderClientInner {
+    reader: tokio_util::codec::FramedRead<
+        tokio::process::ChildStdout,
+        tokio_util::codec::LengthDelimitedCodec,
+    >,
+    writer: tokio_util::codec::FramedWrite<
+        tokio::process::ChildStdin,
+        tokio_util::codec::LengthDelimitedCodec,
+    >,
+    child: tokio::process::Child,
+    next_id: u64,
+}
+
+impl ProviderClient {
+    pub async fn spawn(command: &[String]) -> Result<Self, crate::error::Error> {
+        let mut child = tokio::process::Command::new(&command[0])
+            .args(&command[1..])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()?;
+
+        let stdout = child.stdout.take().expect("stdout is piped");
+        let stdin = child.stdin.take().expect("stdin is piped");
+
+        let reader = crate::codec::framed_read(stdout);
+        let writer = crate::codec::framed_write(stdin);
+
+        Ok(Self {
+            inner: tokio::sync::Mutex::new(ProviderClientInner {
+                reader,
+                writer,
+                child,
+                next_id: 1,
+            }),
+        })
+    }
+
+    pub async fn initialize(
+        &self,
+    ) -> Result<crate::message::InitializeResult, crate::error::Error> {
+        self.call(crate::message::RequestBody::Initialize(
+            crate::message::InitializeParams {},
+        ))
+        .await
+    }
+
+    pub async fn sign(
+        &self,
+        certificate_id: &str,
+        blob: &[u8],
+    ) -> Result<Vec<u8>, crate::error::Error> {
+        let result: crate::message::SignResult = self
+            .call(crate::message::RequestBody::Sign(
+                crate::message::SignParams {
+                    certificate_id: certificate_id.to_owned(),
+                    blob: blob.to_vec(),
+                },
+            ))
+            .await?;
+        Ok(result.signature)
+    }
+
+    async fn call<R: serde::de::DeserializeOwned>(
+        &self,
+        body: crate::message::RequestBody,
+    ) -> Result<R, crate::error::Error> {
+        let mut inner = self.inner.lock().await;
+        let id = inner.next_id;
+        inner.next_id += 1;
+
+        let request = crate::message::Request { id, body };
+        crate::codec::send_message(&mut inner.writer, &request).await?;
+
+        let response: crate::message::RawResponse<R> =
+            crate::codec::recv_message(&mut inner.reader).await?;
+
+        if response.id != id {
+            return Err(crate::error::Error::UnexpectedResponseId {
+                expected: id,
+                got: response.id,
+            });
+        }
+
+        match response.body {
+            crate::message::RawResponseBody::Result { result } => Ok(result),
+            crate::message::RawResponseBody::Error { error } => {
+                Err(crate::error::Error::Provider {
+                    code: error.code,
+                    message: error.message,
+                })
+            }
+        }
+    }
+
+    pub async fn kill(&self) -> Result<(), crate::error::Error> {
+        let mut inner = self.inner.lock().await;
+        inner.child.kill().await?;
+        Ok(())
+    }
+}
