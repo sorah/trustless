@@ -20,7 +20,7 @@ pub struct ProxyStartArgs {
 
     /// Log to file instead of stderr
     #[arg(long, default_value_t = false)]
-    log_to_file: bool,
+    pub log_to_file: bool,
 
     /// Force start even if another proxy is detected
     #[arg(long, default_value_t = false)]
@@ -42,11 +42,13 @@ pub fn run(cmd: &ProxyCommand) -> anyhow::Result<()> {
 }
 
 fn run_start(args: &ProxyStartArgs) -> anyhow::Result<()> {
+    nix::sys::stat::umask(nix::sys::stat::Mode::from_bits(0o077).unwrap());
+    crate::config::state_dir_mkpath()?;
+
     if args.daemonize {
         daemonize()?;
     }
 
-    init_logging(args.log_to_file);
     run_start_async(args)
 }
 
@@ -58,10 +60,6 @@ async fn run_start_async(args: &ProxyStartArgs) -> anyhow::Result<()> {
 
     // Check for existing proxy
     check_existing_proxy(args.force).await?;
-
-    // Create state directory
-    nix::sys::stat::umask(nix::sys::stat::Mode::from_bits(0o077).unwrap());
-    crate::config::state_dir_mkpath()?;
 
     // Generate self-signed certificate
     let (certified_key, cert_pem) = generate_self_signed_cert()?;
@@ -291,7 +289,9 @@ fn daemonize() -> anyhow::Result<()> {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     let arg0 = process_path::get_executable_path().expect("can't get executable path");
 
-    let d = daemonize::Daemonize::new().stderr(daemonize::Stdio::keep());
+    let d = daemonize::Daemonize::new()
+        .working_directory(crate::config::state_dir())
+        .stderr(daemonize::Stdio::keep());
 
     match d.execute() {
         daemonize::Outcome::Parent(Ok(o)) => {
@@ -324,61 +324,56 @@ fn daemonize() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn init_logging(log_to_file: bool) {
-    let rust_log = std::env::var_os("RUST_LOG");
-
-    // SAFETY: Called during program initialization in single-threaded context
-    // before any threads are spawned.
-    #[cfg(not(debug_assertions))]
-    unsafe {
-        std::env::remove_var("RUST_LOG");
+/// Connect to existing proxy or auto-start one.
+/// Respects TRUSTLESS_NO_AUTO_PROXY env var.
+pub async fn connect_or_start() -> anyhow::Result<crate::control::Client> {
+    if let Ok(client) = crate::control::Client::from_state()
+        && client.ping().await.is_ok()
+    {
+        return Ok(client);
     }
 
-    if let Ok(l) = std::env::var("TRUSTLESS_LOG") {
-        // SAFETY: Called during program initialization in single-threaded context
-        unsafe {
-            std::env::set_var("RUST_LOG", l);
-        }
+    if std::env::var_os("TRUSTLESS_NO_AUTO_PROXY").is_some() {
+        anyhow::bail!("no running proxy and TRUSTLESS_NO_AUTO_PROXY is set");
     }
 
-    if log_to_file {
-        if std::env::var_os("RUST_LOG").is_none() {
-            // SAFETY: single-threaded init
-            unsafe {
-                std::env::set_var("RUST_LOG", "trustless=info");
-            }
-        }
-        let log_dir = crate::config::log_dir_mkpath().expect("can't create log directory");
-        let w = tracing_appender::rolling::daily(log_dir, "trustless.log");
-        tracing_subscriber::fmt()
-            .with_writer(w)
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .init();
-    } else {
-        if std::env::var_os("RUST_LOG").is_none() {
-            // SAFETY: single-threaded init
-            unsafe {
-                std::env::set_var("RUST_LOG", "trustless=info");
-            }
-        }
-        tracing_subscriber::fmt()
-            .with_writer(std::io::stderr)
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .init();
-    }
+    tracing::info!("Starting the proxy");
+    spawn_proxy().await?;
 
-    // Restore original RUST_LOG
-    if let Some(v) = rust_log {
-        // SAFETY: single-threaded init
-        unsafe {
-            std::env::set_var("RUST_LOG", v);
-        }
-    } else {
-        // SAFETY: single-threaded init
-        unsafe {
-            std::env::remove_var("RUST_LOG");
+    let fut = attempt_connect_to_proxy_loop();
+    match tokio::time::timeout(std::time::Duration::from_secs(20), fut).await {
+        Ok(Ok(c)) => Ok(c),
+        Ok(Err(_)) => unreachable!(),
+        Err(_) => {
+            anyhow::bail!("timed out waiting for proxy to start");
         }
     }
+}
+
+async fn attempt_connect_to_proxy_loop() -> anyhow::Result<crate::control::Client> {
+    loop {
+        if let Ok(client) = crate::control::Client::from_state()
+            && client.ping().await.is_ok()
+        {
+            return Ok(client);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+}
+
+/// Spawn proxy as a daemon process.
+async fn spawn_proxy() -> anyhow::Result<()> {
+    let arg0 = process_path::get_executable_path().expect("can't get executable path");
+
+    tokio::process::Command::new(arg0)
+        .args(["proxy", "start", "--log-to-file", "--daemonize"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::inherit())
+        .kill_on_drop(false)
+        .status()
+        .await?;
+    Ok(())
 }
 
 #[tokio::main]

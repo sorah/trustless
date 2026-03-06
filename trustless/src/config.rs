@@ -66,9 +66,23 @@ pub fn state_dir() -> std::path::PathBuf {
     }
 }
 
+const STATE_DIR_MODE: nix::sys::stat::Mode = nix::sys::stat::Mode::S_IRWXU;
+
 pub fn state_dir_mkpath() -> std::io::Result<std::path::PathBuf> {
     let dir = state_dir();
-    std::fs::create_dir_all(&dir)?;
+    if dir.exists() {
+        use std::os::unix::fs::PermissionsExt;
+        #[allow(clippy::useless_conversion)]
+        std::fs::set_permissions(
+            &dir,
+            std::fs::Permissions::from_mode(STATE_DIR_MODE.bits().into()),
+        )?;
+    } else {
+        if let Some(parent) = dir.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        nix::unistd::mkdir(&dir, STATE_DIR_MODE)?;
+    }
     Ok(dir)
 }
 
