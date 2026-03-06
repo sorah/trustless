@@ -5,33 +5,10 @@
 - **001: Protocol & Stub Provider** — `trustless-protocol`, `trustless-provider-stub` ([spec](001-protocol.md))
 - **002: Config & State Directories** — `trustless::config`, `trustless setup` ([spec](002-config.md))
 - **003: Remote Signer** — `trustless::signer` ([spec](003-remote-signer.md))
-
-### 004 Proxy Service (dispatched, parallel with 005/006)
-
-- Implement a generic reverse proxy as axum handler functions
-- State management for name-to-backend mappings and CLI tools to manipulate them (e.g. add/remove mappings)
-- run as a plain HTTP service during this mission
-- Exports `proxy_router(state) -> Router` for later integration with 006
-
-### 005 Complete Provider registry and orchestration (dispatched, parallel with 004/006)
-
-- Support adding provider, restarting provider
-- Collect errors from provider and expose as a function
-- ProviderRegistry already in provider.rs from prep commit
-
-### 006 Proxy process lifecycle & CLI-Proxy IPC (dispatched, parallel with 004/005)
-
-- `trustless proxy start` — start foreground proxy process
-- Auto-start proxy from `trustless exec` (connect-or-start pattern, ref: mairu `connect_or_start()`)
-- State directory: save proxy cert, socket/port info
-- Uses axum for control API, bare ProviderRegistry (no orchestrator)
-
-### TLS server with remote signer
-
-- HTTPS listener using `tokio`, `hyper`, `rustls`
-- Enable HTTP/2
-- Default to TLS 1.3 only. Enable TLS 1.2 via `Config::tls12` field.
-- Listen on a configurable port (`proxy start --port` or `Config::port`)
+- **004: Proxy Service** — `trustless::proxy`, `trustless::route`, `trustless route` ([spec](004-proxy-service.md))
+- **005: Provider Registry & Orchestration** — `trustless::provider` ([spec](005-provider-registry.md))
+- **006: Proxy Lifecycle & Control API** — `trustless::control`, `trustless proxy start/stop` ([spec](006-proxy-lifecycle.md))
+- **TLS server** — HTTPS listener, HTTP/2, TLS 1.2/1.3 configuration (`f701a51`)
 
 ### Wiring up 004,005,006
 
