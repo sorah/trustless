@@ -12,7 +12,7 @@ Three-layer design:
 
 1. **`ProviderOrchestrator`** — Top-level lifecycle manager. Spawns providers, monitors for crashes, auto-restarts with exponential backoff, tracks errors (recent protocol errors and stderr from crashed processes).
 2. **`ProviderRegistry`** — State management for certificates and signing handles. Moved from `trustless::signer` to `trustless::provider`. Unchanged in responsibility: stores `CertResolverEntry` values, resolves by SNI.
-3. **`ProviderSession`** — Represents one lifecycle of a spawned provider process. Wraps a `ProviderClient` and its associated `SigningThread`/`SigningThreadHandle`.
+3. **`ProviderSession`** — Represents one lifecycle of a spawned provider process. Wraps a `ProviderClient` and its associated `SigningWorker`/`SigningHandle`.
 
 ```rust
 use trustless::provider::{ProviderOrchestrator, ProviderRegistry};
@@ -109,7 +109,7 @@ This spec is implemented in parallel with 004 (Proxy Service) and 006 (Proxy Lif
 
 ### Module structure
 
-- `trustless/src/signer.rs` — Keeps `SigningThread`, `SigningThreadHandle`, `RemoteSigningKey`, `RemoteSigner`, `CertResolver`. All existing tests stay.
+- `trustless/src/signer.rs` — Keeps `SigningWorker`, `SigningHandle`, `RemoteSigningKey`, `RemoteSigner`, `CertResolver`. All existing tests stay.
 - `trustless/src/provider.rs` (already exists from prep) — Extend with `ProviderOrchestrator`, `ProviderSession`. `ProviderRegistry` is already here.
 
 ### Provider identity
@@ -120,7 +120,7 @@ Each provider is identified by its profile name (e.g., `"default"`). This ID is 
 
 Represents one lifecycle of a spawned provider. Contains:
 - `Arc<ProviderClient>` — the spawned process
-- `SigningThreadHandle` — for sign requests
+- `SigningHandle` — for sign requests
 - Stderr ring buffer handle
 
 ### ProviderProcess (trustless-protocol)
@@ -270,7 +270,7 @@ Implementors MUST keep this section updated as they work.
   - [x] Add `ProviderErrorKind` enum (`Crash`, `InitFailure`, `ProtocolError`)
   - [x] Unit tests: replace_provider, error FIFO, state tracking
 - [x] **ProviderSession** (`trustless/src/provider.rs`):
-  - [x] Struct wrapping `Arc<ProviderClient>`, `SigningThreadHandle`, stderr ring buffer
+  - [x] Struct wrapping `Arc<ProviderClient>`, `SigningHandle`, stderr ring buffer
 - [x] **ProviderOrchestrator** (`trustless/src/provider.rs`):
   - [x] Arc-wrapped, Clone
   - [x] `new(registry)`, `add_provider(name, profile)`, `restart_provider(name)`, `shutdown()`
@@ -281,7 +281,7 @@ Implementors MUST keep this section updated as they work.
   - [ ] Unit tests with mocked ProviderProcess
 - [x] **Signer module update** (`trustless/src/signer.rs`):
   - [x] ~~Remove `ProviderRegistry` and related types (moved to provider.rs)~~ (done in prep)
-  - [x] Verify imports are clean, keep SigningThread/RemoteSigningKey/RemoteSigner/CertResolver
+  - [x] Verify imports are clean, keep SigningWorker/RemoteSigningKey/RemoteSigner/CertResolver
 - [x] **Dependencies**:
   - [x] Add `tokio-util` to `trustless/Cargo.toml` (sync feature not needed in 0.7.18 — CancellationToken always available)
   - [x] Add `libc` to `trustless/Cargo.toml` and `trustless-protocol/Cargo.toml` (for SIGTERM)
@@ -299,9 +299,9 @@ Implementors MUST keep this section updated as they work.
 - **ProviderProcess**: New `trustless-protocol/src/process.rs` with `spawn()`, `wait()`, `signal()` (unix-only via libc), `kill()`, and `into_parts()` for decomposing into client/stderr/child when separate ownership is needed.
 - **ProviderClient**: Removed `spawn()` and `kill()`, replaced with `from_child_io(stdin, stdout)`. Process lifecycle now owned by `ProviderProcess`.
 - **ProviderRegistry**: Changed internal storage from `Vec<ProviderEntry>` to `HashMap<String, ProviderEntry>` keyed by provider name. Added `replace_provider()` for atomic cert swap, `ProviderState` enum, error tracking with FIFO ring (10 entries), `push_error()`/`errors()`/`set_provider_state()`/`provider_state()` methods. Extracted `parse_init_result()` helper to share between `add_provider()` and `replace_provider()`.
-- **ProviderSession**: Struct wrapping `Arc<ProviderClient>`, `SigningThreadHandle`, and stderr ring buffer.
+- **ProviderSession**: Struct wrapping `Arc<ProviderClient>`, `SigningHandle`, and stderr ring buffer.
 - **ProviderOrchestrator**: Arc-wrapped Clone struct. `add_provider()` spawns + initializes synchronously, then starts a supervisor task. Supervisor uses `tokio::select!` on child.wait / CancellationToken / mpsc commands. Exponential backoff (1s→5m, 2x, reset after 60s healthy). Stderr reader task (100-line ring buffer, forwarded to tracing at warn). `restart_provider()` kills current process and respawns with backoff reset, returning only after re-initialization. `shutdown()` sends SIGTERM, waits 20s, then SIGKILL.
-- **SigningThreadHandle**: Added `disconnected()` constructor for tests/placeholder entries.
+- **SigningHandle**: Added `disconnected()` constructor for tests/placeholder entries.
 - **Dependencies**: Added `tokio-util` (0.7) and `libc` (0.2) to trustless crate; added `libc` (0.2) to trustless-protocol crate.
 - **Tests**: All existing tests updated for ProviderProcess API. New unit tests: `replace_provider_swaps_atomically`, `error_fifo_respects_capacity`, `error_entry_fields`, `provider_state_tracking`, `backoff_calculation`.
 - **Note**: Unit tests for ProviderOrchestrator with mocked ProviderProcess are deferred — the orchestrator's supervisor loop directly calls `ProviderProcess::spawn()` which is hard to mock without trait abstraction. The orchestrator is covered by the integration tests via real provider-stub processes.
