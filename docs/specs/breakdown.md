@@ -3,15 +3,9 @@
 ## Done
 
 - **001: Protocol & Stub Provider** — `trustless-protocol`, `trustless-provider-stub` ([spec](001-protocol.md))
+- **002: Config & State Directories** — `trustless::config`, `trustless setup` ([spec](002-config.md))
 
 ## Remaining Modules
-
-### 002: Config & State Directories
-
-- XDG directory discovery (`$XDG_RUNTIME_DIR/trustless`, `~/.local/state/trustless`)
-- Profile support (default profile, `--profile=NAME`)
-- `trustless setup` — save provider command line to config
-- Config file format (TOML or JSON in state dir)
 
 ### 003: Remote Signer (rustls integration)
 

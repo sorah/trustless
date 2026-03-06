@@ -8,9 +8,15 @@ license = "Apache-2.0"
 trustless-protocol = { path = "../trustless-protocol" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"
 
 [[example]]
 name = "provider_client"
