@@ -13,14 +13,6 @@
 - run as a plain HTTP service during this mission
 - Exports `proxy_router(state) -> Router` for later integration with 006
 
-### TLS server with remote signer
-
-- HTTPS listener using `tokio`, `hyper`, `rustls`
-- Enable HTTP/2
-- Default to TLS 1.3 only. Enable TLS 1.2 via `Config::tls12` field.
-- Accept TLS connections, terminate TLS using the remote signer
-- Listen on a configurable port (default `[::1]:1443` with IPV6_V6ONLY=false)
-
 ### 005 Complete Provider registry and orchestration (dispatched, parallel with 004/006)
 
 - Support adding provider, restarting provider
@@ -33,6 +25,20 @@
 - Auto-start proxy from `trustless exec` (connect-or-start pattern, ref: mairu `connect_or_start()`)
 - State directory: save proxy cert, socket/port info
 - Uses axum for control API, bare ProviderRegistry (no orchestrator)
+
+### TLS server with remote signer
+
+- HTTPS listener using `tokio`, `hyper`, `rustls`
+- Enable HTTP/2
+- Default to TLS 1.3 only. Enable TLS 1.2 via `Config::tls12` field.
+- Listen on a configurable port (`proxy start --port` or `Config::port`)
+
+### Wiring up 004,005,006
+
+- `src/cmd/proxy.rs` to do:
+    - Start the provider registry (005)
+    - Run the proxy service (004) and the control API (006)
+    - Accept TLS connections, terminate TLS using the remote signer from the provider registry
 
 ### Proxy control API
 
