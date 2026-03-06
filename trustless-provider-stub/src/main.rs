@@ -86,7 +86,13 @@ impl StubHandler {
 
             let version_dir = path.join(&version);
 
-            let fullchain_pem = std::fs::read_to_string(version_dir.join("fullchain.pem"))?;
+            let fullchain_pem = match std::fs::read_to_string(version_dir.join("fullchain.pem")) {
+                Ok(pem) => pem,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    std::fs::read_to_string(version_dir.join("cert.pem"))?
+                }
+                Err(e) => return Err(e.into()),
+            };
             let key_pem = std::fs::read(version_dir.join("key.pem"))?;
 
             let id = format!("{domain_name}/{version}");
