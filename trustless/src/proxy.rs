@@ -2,6 +2,50 @@ use std::sync::Arc;
 
 const VIA_VALUE: &str = "1.1 trustless";
 
+#[derive(thiserror::Error, Debug)]
+enum ProxyError {
+    #[error("no Host header")]
+    NoHostHeader,
+    #[error("proxy control API not yet implemented")]
+    ControlApiNotImplemented,
+    #[error(
+        "loop detected for {host}: request has passed through trustless {hops} times. \
+         This usually means a backend is proxying back through trustless without \
+         rewriting the Host header."
+    )]
+    LoopDetected { host: String, hops: u32 },
+    #[error("no route for host: {0}")]
+    NoRoute(String),
+    #[error("route resolution error: {0}")]
+    RouteResolution(crate::route::RouteError),
+    #[error("failed to connect to backend {backend}: {source}")]
+    BackendConnect {
+        backend: std::net::SocketAddr,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+    #[error("failed to send request to backend {backend}: {source}")]
+    BackendRequest {
+        backend: std::net::SocketAddr,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+}
+
+impl ProxyError {
+    fn status(&self) -> http::StatusCode {
+        match self {
+            Self::ControlApiNotImplemented => http::StatusCode::SERVICE_UNAVAILABLE,
+            Self::LoopDetected { .. } => http::StatusCode::LOOP_DETECTED,
+            _ => http::StatusCode::BAD_GATEWAY,
+        }
+    }
+}
+
+impl axum::response::IntoResponse for ProxyError {
+    fn into_response(self) -> axum::response::Response {
+        (self.status(), self.to_string()).into_response()
+    }
+}
+
 /// Custom header tracking how many times a request has passed through the
 /// trustless proxy. Used to detect forwarding loops (e.g. a dev server proxying
 /// back through trustless without rewriting the Host header).
@@ -28,35 +72,21 @@ async fn proxy_handler(
     axum::extract::State(state): axum::extract::State<Arc<ProxyState>>,
     axum::extract::ConnectInfo(client_addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
     req: axum::extract::Request,
-) -> axum::response::Response {
+) -> Result<axum::response::Response, ProxyError> {
     let start = std::time::Instant::now();
 
-    let host_header = req
+    let host = req
         .headers()
         .get(http::header::HOST)
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
+        .map(|s| s.to_string())
+        .ok_or(ProxyError::NoHostHeader)?;
 
-    let host = match &host_header {
-        Some(h) => h.clone(),
-        None => {
-            return axum::response::Response::builder()
-                .status(502)
-                .body(axum::body::Body::from("no Host header"))
-                .unwrap();
-        }
-    };
-
-    let host_without_port = crate::route::RouteTable::strip_port(&host);
+    let host_without_port = crate::route::strip_port(&host);
 
     // Reserved hostname
     if host_without_port.eq_ignore_ascii_case("trustless") {
-        return axum::response::Response::builder()
-            .status(503)
-            .body(axum::body::Body::from(
-                "proxy control API not yet implemented",
-            ))
-            .unwrap();
+        return Err(ProxyError::ControlApiNotImplemented);
     }
 
     // Loop prevention
@@ -68,33 +98,21 @@ async fn proxy_handler(
         .unwrap_or(0);
     if hops >= MAX_PROXY_HOPS {
         tracing::warn!(host = %host, hops = hops, "loop detected");
-        return axum::response::Response::builder()
-            .status(508)
-            .body(axum::body::Body::from(format!(
-                "loop detected for {host}: request has passed through trustless {hops} times. \
-                 This usually means a backend is proxying back through trustless without \
-                 rewriting the Host header."
-            )))
-            .unwrap();
+        return Err(ProxyError::LoopDetected {
+            host: host.clone(),
+            hops,
+        });
     }
 
     let backend = match state.route_table.resolve(&host) {
         Ok(Some(addr)) => addr,
         Ok(None) => {
             tracing::warn!(host = %host, "no route found");
-            return axum::response::Response::builder()
-                .status(502)
-                .body(axum::body::Body::from(format!("no route for host: {host}")))
-                .unwrap();
+            return Err(ProxyError::NoRoute(host));
         }
         Err(e) => {
             tracing::error!(host = %host, error = %e, "route resolution error");
-            return axum::response::Response::builder()
-                .status(502)
-                .body(axum::body::Body::from(format!(
-                    "route resolution error: {e}"
-                )))
-                .unwrap();
+            return Err(ProxyError::RouteResolution(e));
         }
     };
 
@@ -111,9 +129,9 @@ async fn proxy_handler(
         .map_or("/".to_string(), |pq| pq.to_string());
 
     let response = if is_upgrade {
-        handle_upgrade(state.clone(), client_addr, req, backend, &host, hops).await
+        handle_upgrade(state, client_addr, req, backend, &host, hops).await?
     } else {
-        handle_request(state.clone(), client_addr, req, backend, &host, hops).await
+        handle_request(state, client_addr, req, backend, &host, hops).await?
     };
 
     let status = response.status();
@@ -128,7 +146,7 @@ async fn proxy_handler(
         "proxied request"
     );
 
-    response
+    Ok(response)
 }
 
 fn build_forwarded_headers(
@@ -214,7 +232,7 @@ async fn handle_request(
     backend: std::net::SocketAddr,
     original_host: &str,
     hops: u32,
-) -> axum::response::Response {
+) -> Result<axum::response::Response, ProxyError> {
     let (mut parts, body) = req.into_parts();
     let url = format!(
         "http://{}{}",
@@ -247,12 +265,10 @@ async fn handle_request(
     let upstream_response = match request_builder.send().await {
         Ok(resp) => resp,
         Err(e) => {
-            return axum::response::Response::builder()
-                .status(502)
-                .body(axum::body::Body::from(format!(
-                    "failed to connect to backend {backend}: {e}"
-                )))
-                .unwrap();
+            return Err(ProxyError::BackendConnect {
+                backend,
+                source: Box::new(e),
+            });
         }
     };
 
@@ -266,7 +282,7 @@ async fn handle_request(
     }
     response_builder = response_builder.header(http::header::VIA, VIA_VALUE);
     let body = axum::body::Body::from_stream(upstream_response.bytes_stream());
-    response_builder.body(body).unwrap()
+    Ok(response_builder.body(body).unwrap())
 }
 
 async fn handle_upgrade(
@@ -276,7 +292,7 @@ async fn handle_upgrade(
     backend: std::net::SocketAddr,
     original_host: &str,
     hops: u32,
-) -> axum::response::Response {
+) -> Result<axum::response::Response, ProxyError> {
     let forwarded = build_forwarded_headers(client_addr, original_host, "http");
 
     // Build the request to the backend
@@ -315,12 +331,10 @@ async fn handle_upgrade(
     let stream = match tokio::net::TcpStream::connect(backend.to_string()).await {
         Ok(s) => s,
         Err(e) => {
-            return axum::response::Response::builder()
-                .status(502)
-                .body(axum::body::Body::from(format!(
-                    "failed to connect to backend {backend}: {e}"
-                )))
-                .unwrap();
+            return Err(ProxyError::BackendConnect {
+                backend,
+                source: Box::new(e),
+            });
         }
     };
 
@@ -328,12 +342,10 @@ async fn handle_upgrade(
         match hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(stream)).await {
             Ok(r) => r,
             Err(e) => {
-                return axum::response::Response::builder()
-                    .status(502)
-                    .body(axum::body::Body::from(format!(
-                        "failed to connect to backend {backend}: {e}"
-                    )))
-                    .unwrap();
+                return Err(ProxyError::BackendConnect {
+                    backend,
+                    source: Box::new(e),
+                });
             }
         };
 
@@ -346,12 +358,10 @@ async fn handle_upgrade(
     let backend_response = match sender.send_request(backend_req).await {
         Ok(r) => r,
         Err(e) => {
-            return axum::response::Response::builder()
-                .status(502)
-                .body(axum::body::Body::from(format!(
-                    "failed to send request to backend {backend}: {e}"
-                )))
-                .unwrap();
+            return Err(ProxyError::BackendRequest {
+                backend,
+                source: Box::new(e),
+            });
         }
     };
 
@@ -392,7 +402,7 @@ async fn handle_upgrade(
             }
         });
 
-        client_response.body(axum::body::Body::empty()).unwrap()
+        Ok(client_response.body(axum::body::Body::empty()).unwrap())
     } else {
         // Not an upgrade response, return as-is
         let mut response_headers = backend_response.headers().clone();
@@ -411,7 +421,7 @@ async fn handle_upgrade(
             .await
             .map(|collected: http_body_util::Collected<bytes::Bytes>| collected.to_bytes())
             .unwrap_or_default();
-        response_builder.body(axum::body::Body::from(body)).unwrap()
+        Ok(response_builder.body(axum::body::Body::from(body)).unwrap())
     }
 }
 

@@ -34,6 +34,66 @@ pub struct RouteTable {
     inner: Arc<parking_lot::Mutex<Inner>>,
 }
 
+fn validate_hostname(host: &str) -> Result<(), RouteError> {
+    if host.eq_ignore_ascii_case("trustless") {
+        return Err(RouteError::ReservedHostname(host.to_string()));
+    }
+    if host.is_empty() {
+        return Err(RouteError::InvalidHostname(
+            host.to_string(),
+            "hostname must not be empty".to_string(),
+        ));
+    }
+    if host.len() > 253 {
+        return Err(RouteError::InvalidHostname(
+            host.to_string(),
+            "hostname too long".to_string(),
+        ));
+    }
+    for label in host.split('.') {
+        if label.is_empty() {
+            return Err(RouteError::InvalidHostname(
+                host.to_string(),
+                "empty label".to_string(),
+            ));
+        }
+        if label.len() > 63 {
+            return Err(RouteError::InvalidHostname(
+                host.to_string(),
+                "label too long".to_string(),
+            ));
+        }
+        if !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            return Err(RouteError::InvalidHostname(
+                host.to_string(),
+                "invalid characters in label".to_string(),
+            ));
+        }
+        if label.starts_with('-') || label.ends_with('-') {
+            return Err(RouteError::InvalidHostname(
+                host.to_string(),
+                "label must not start or end with a hyphen".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub fn strip_port(host: &str) -> &str {
+    if let Some(rest) = host.strip_prefix('[') {
+        // Bracketed IPv6: [::1]:8080 or [::1]
+        match rest.find(']') {
+            Some(i) => &host[..i + 2], // include the brackets
+            None => host,
+        }
+    } else {
+        match host.rsplit_once(':') {
+            Some((h, port)) if port.chars().all(|c| c.is_ascii_digit()) => h,
+            _ => host,
+        }
+    }
+}
+
 impl RouteTable {
     pub fn new(state_dir: std::path::PathBuf) -> Self {
         Self {
@@ -49,64 +109,8 @@ impl RouteTable {
         state_dir.join("routes.json")
     }
 
-    fn validate_hostname(host: &str) -> Result<(), RouteError> {
-        if host.eq_ignore_ascii_case("trustless") {
-            return Err(RouteError::ReservedHostname(host.to_string()));
-        }
-        if host.is_empty() {
-            return Err(RouteError::InvalidHostname(
-                host.to_string(),
-                "hostname must not be empty".to_string(),
-            ));
-        }
-        if host.len() > 253 {
-            return Err(RouteError::InvalidHostname(
-                host.to_string(),
-                "hostname too long".to_string(),
-            ));
-        }
-        for label in host.split('.') {
-            if label.is_empty() {
-                return Err(RouteError::InvalidHostname(
-                    host.to_string(),
-                    "empty label".to_string(),
-                ));
-            }
-            if label.len() > 63 {
-                return Err(RouteError::InvalidHostname(
-                    host.to_string(),
-                    "label too long".to_string(),
-                ));
-            }
-            if !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-                return Err(RouteError::InvalidHostname(
-                    host.to_string(),
-                    "invalid characters in label".to_string(),
-                ));
-            }
-            if label.starts_with('-') || label.ends_with('-') {
-                return Err(RouteError::InvalidHostname(
-                    host.to_string(),
-                    "label must not start or end with a hyphen".to_string(),
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    pub fn strip_port(host: &str) -> &str {
-        // Handle IPv6 addresses in brackets
-        if host.starts_with('[') {
-            return host;
-        }
-        match host.rsplit_once(':') {
-            Some((h, port)) if port.chars().all(|c| c.is_ascii_digit()) => h,
-            _ => host,
-        }
-    }
-
     pub fn resolve(&self, host: &str) -> Result<Option<std::net::SocketAddr>, RouteError> {
-        let host = Self::strip_port(host);
+        let host = strip_port(host);
         let mut inner = self.inner.lock();
         let path = Self::routes_path(&inner.state_dir);
 
@@ -138,11 +142,13 @@ impl RouteTable {
         host: &str,
         create: bool,
     ) -> Result<(RoutesFile, std::fs::File), RouteError> {
-        let inner = self.inner.lock();
-        if create {
-            std::fs::create_dir_all(&inner.state_dir)?;
-        }
-        let path = Self::routes_path(&inner.state_dir);
+        let path = {
+            let inner = self.inner.lock();
+            if create {
+                std::fs::create_dir_all(&inner.state_dir)?;
+            }
+            Self::routes_path(&inner.state_dir)
+        };
 
         let file = std::fs::OpenOptions::new()
             .read(true)
@@ -188,7 +194,7 @@ impl RouteTable {
         force: bool,
         allow_non_localhost: bool,
     ) -> Result<(), RouteError> {
-        Self::validate_hostname(host)?;
+        validate_hostname(host)?;
         if !allow_non_localhost && !backend.ip().is_loopback() {
             return Err(RouteError::NonLoopbackBackend(backend));
         }
@@ -295,6 +301,15 @@ mod tests {
 
         let resolved = table.resolve("api.lo.dev.invalid:8080").unwrap();
         assert_eq!(resolved, Some(addr));
+    }
+
+    #[test]
+    fn test_strip_port() {
+        assert_eq!(strip_port("example.com:8080"), "example.com");
+        assert_eq!(strip_port("example.com"), "example.com");
+        assert_eq!(strip_port("[::1]:8080"), "[::1]");
+        assert_eq!(strip_port("[::1]"), "[::1]");
+        assert_eq!(strip_port("[2001:db8::1]:443"), "[2001:db8::1]");
     }
 
     #[test]
