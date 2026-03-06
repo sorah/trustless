@@ -7,6 +7,9 @@ pub struct Config {
     #[serde(default = "default_port")]
     pub port: u16,
 
+    #[serde(default)]
+    pub tls12: bool,
+
     #[serde(skip)]
     config_dir: std::path::PathBuf,
 }
@@ -15,6 +18,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             port: 0,
+            tls12: false,
             config_dir: std::path::PathBuf::new(),
         }
     }
@@ -153,5 +157,21 @@ mod tests {
         std::fs::write(dir.path().join("config.json"), r#"{"port": 8443}"#).unwrap();
         let config = Config::load_from(dir.path().to_path_buf()).unwrap();
         assert_eq!(config.port, 8443);
+    }
+
+    #[test]
+    fn test_config_tls12_default_false() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.json"), "{}").unwrap();
+        let config = Config::load_from(dir.path().to_path_buf()).unwrap();
+        assert!(!config.tls12);
+    }
+
+    #[test]
+    fn test_config_tls12_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.json"), r#"{"tls12": true}"#).unwrap();
+        let config = Config::load_from(dir.path().to_path_buf()).unwrap();
+        assert!(config.tls12);
     }
 }

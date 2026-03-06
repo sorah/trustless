@@ -25,6 +25,10 @@ pub struct ProxyStartArgs {
     /// Force start even if another proxy is detected
     #[arg(long, default_value_t = false)]
     force: bool,
+
+    /// Enable TLS 1.2 (default: TLS 1.3 only)
+    #[arg(long, default_value_t = false)]
+    tls12: bool,
 }
 
 #[derive(clap::Args)]
@@ -67,10 +71,17 @@ async fn run_start_async(args: &ProxyStartArgs) -> anyhow::Result<()> {
     registry.register_control_cert(Arc::new(certified_key), vec!["trustless".to_owned()]);
 
     // Build TLS config
+    let tls12 = args.tls12 || config.tls12;
     let cert_resolver = Arc::new(crate::signer::CertResolver::new(registry));
-    let tls_config = rustls::ServerConfig::builder()
+    let protocol_versions = if tls12 {
+        &[&rustls::version::TLS13, &rustls::version::TLS12] as &[_]
+    } else {
+        &[&rustls::version::TLS13] as &[_]
+    };
+    let mut tls_config = rustls::ServerConfig::builder_with_protocol_versions(protocol_versions)
         .with_no_client_auth()
         .with_cert_resolver(cert_resolver);
+    tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
     let tls_acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls_config));
 
     // Bind TCP listener
