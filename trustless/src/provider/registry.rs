@@ -384,7 +384,7 @@ fn parse_leaf_cert_metadata(
     }
 }
 
-fn matches_sni(sni: &str, domains: &[String]) -> bool {
+pub(crate) fn matches_sni(sni: &str, domains: &[String]) -> bool {
     for domain in domains {
         if domain == sni {
             return true;
