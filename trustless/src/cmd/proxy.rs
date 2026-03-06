@@ -70,6 +70,19 @@ async fn run_start_async(args: &ProxyStartArgs) -> anyhow::Result<()> {
     let registry = crate::provider::ProviderRegistry::new();
     registry.register_control_cert(Arc::new(certified_key), vec!["trustless".to_owned()]);
 
+    // Initialize providers from configured profiles
+    let orchestrator = crate::provider::ProviderOrchestrator::new(registry.clone());
+    let profile_names = config.list_profiles()?;
+    for name in &profile_names {
+        let profile = config.load_profile(name)?;
+        tracing::info!(provider = %name, "Starting provider");
+        orchestrator.add_provider(name, profile).await?;
+        tracing::info!(provider = %name, "Provider initialized");
+    }
+    if profile_names.is_empty() {
+        tracing::info!("No profiles configured");
+    }
+
     // Build TLS config
     let tls12 = args.tls12 || config.tls12;
     let cert_resolver = Arc::new(crate::signer::CertResolver::new(registry));
@@ -98,13 +111,24 @@ async fn run_start_async(args: &ProxyStartArgs) -> anyhow::Result<()> {
     state.write_atomic()?;
     tracing::info!(path = %crate::control::ProxyState::path().display(), "State file written");
 
+    // Route table and proxy router
+    let route_table = crate::route::RouteTable::new(crate::config::state_dir());
+    let proxy_state = crate::proxy::ProxyState {
+        route_table,
+        client: reqwest::Client::new(),
+    };
+    let proxy_app = crate::proxy::proxy_router(proxy_state);
+
     // Shutdown signal
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let server_state = crate::control::server::ServerState::new(shutdown_tx);
-    let app = crate::control::server::dispatch_router(server_state);
+    let app = crate::control::server::dispatch_router(server_state, proxy_app);
 
     // Serve
     let result = serve(listener, tls_acceptor, app, shutdown_rx).await;
+
+    // Shutdown providers
+    orchestrator.shutdown().await;
 
     // Cleanup
     crate::control::ProxyState::remove();
@@ -159,6 +183,7 @@ async fn serve(
                 };
 
                 let io = hyper_util::rt::TokioIo::new(tls_stream);
+                let app = app.layer(axum::Extension(crate::proxy::ClientAddr(addr)));
                 let service = hyper_util::service::TowerToHyperService::new(app);
 
                 let builder = hyper_util::server::conn::auto::Builder::new(

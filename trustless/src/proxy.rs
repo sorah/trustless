@@ -56,6 +56,9 @@ const HOPS_HEADER: &str = "x-trustless-hops";
 /// five gives headroom for multi-tier setups while catching loops quickly.
 const MAX_PROXY_HOPS: u32 = 5;
 
+#[derive(Clone, Copy, Debug)]
+pub struct ClientAddr(pub std::net::SocketAddr);
+
 #[derive(Clone)]
 pub struct ProxyState {
     pub route_table: crate::route::RouteTable,
@@ -70,7 +73,7 @@ pub fn proxy_router(state: ProxyState) -> axum::Router {
 
 async fn proxy_handler(
     axum::extract::State(state): axum::extract::State<Arc<ProxyState>>,
-    axum::extract::ConnectInfo(client_addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    axum::Extension(ClientAddr(client_addr)): axum::Extension<ClientAddr>,
     req: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     let start = std::time::Instant::now();
@@ -584,16 +587,12 @@ mod tests {
             route_table,
             client: reqwest::Client::new(),
         };
-        let app = proxy_router(state);
+        let app =
+            proxy_router(state).layer(axum::Extension(ClientAddr("127.0.0.1:0".parse().unwrap())));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let proxy_addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            axum::serve(
-                listener,
-                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-            )
-            .await
-            .unwrap();
+            axum::serve(listener, app).await.unwrap();
         });
 
         let client = reqwest::Client::new();

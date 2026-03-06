@@ -46,7 +46,9 @@ fn start_test_server(
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let server_state = trustless::control::server::ServerState::new(shutdown_tx);
-    let app = trustless::control::server::dispatch_router(server_state);
+    let stub_proxy = axum::Router::new()
+        .fallback(|| async { (axum::http::StatusCode::BAD_GATEWAY, "no backend") });
+    let app = trustless::control::server::dispatch_router(server_state, stub_proxy);
 
     let handle = tokio::spawn(async move {
         loop {

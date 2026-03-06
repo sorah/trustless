@@ -19,16 +19,12 @@ async fn start_proxy(
         route_table,
         client,
     };
-    let app = trustless::proxy::proxy_router(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    let app = trustless::proxy::proxy_router(state)
+        .layer(axum::Extension(trustless::proxy::ClientAddr(addr)));
     let handle = tokio::spawn(async move {
-        axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-        )
-        .await
-        .unwrap();
+        axum::serve(listener, app).await.unwrap();
     });
     (addr, handle)
 }

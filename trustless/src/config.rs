@@ -94,6 +94,27 @@ impl Config {
         Ok(config)
     }
 
+    pub fn list_profiles(&self) -> Result<Vec<String>, crate::Error> {
+        let dir = self.config_dir.join("profiles.d");
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+        let mut names = Vec::new();
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("json")
+                && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+            {
+                names.push(stem.to_owned());
+            }
+        }
+        names.sort();
+        Ok(names)
+    }
+
     pub fn load_profile(&self, name: &str) -> Result<Profile, crate::Error> {
         let path = self
             .config_dir
@@ -134,6 +155,28 @@ mod tests {
         config.save_profile("test", &profile).unwrap();
         let loaded = config.load_profile("test").unwrap();
         assert_eq!(loaded.command, profile.command);
+    }
+
+    #[test]
+    fn test_list_profiles_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config::load_from(dir.path().to_path_buf()).unwrap();
+        let profiles = config.list_profiles().unwrap();
+        assert!(profiles.is_empty());
+    }
+
+    #[test]
+    fn test_list_profiles() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config::load_from(dir.path().to_path_buf()).unwrap();
+        let profile = Profile {
+            command: vec!["cmd".into()],
+            sign_timeout_seconds: default_sign_timeout_seconds(),
+        };
+        config.save_profile("beta", &profile).unwrap();
+        config.save_profile("alpha", &profile).unwrap();
+        let profiles = config.list_profiles().unwrap();
+        assert_eq!(profiles, vec!["alpha", "beta"]);
     }
 
     #[test]

@@ -44,14 +44,6 @@ async fn not_found() -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
-fn bad_gateway() -> Response {
-    (
-        StatusCode::BAD_GATEWAY,
-        Json(serde_json::json!({"error": "no backend available"})),
-    )
-        .into_response()
-}
-
 fn extract_host(req: &axum::http::Request<axum::body::Body>) -> Option<String> {
     req.headers()
         .get(axum::http::header::HOST)
@@ -64,8 +56,8 @@ fn extract_host(req: &axum::http::Request<axum::body::Body>) -> Option<String> {
 
 /// Build the top-level dispatch router.
 /// Host: trustless → control API
-/// All other hosts → 502 placeholder
-pub fn dispatch_router(state: ServerState) -> axum::Router {
+/// All other hosts → proxy router
+pub fn dispatch_router(state: ServerState, proxy: axum::Router) -> axum::Router {
     use tower::ServiceExt as _;
 
     let control = control_router(state);
@@ -79,7 +71,8 @@ pub fn dispatch_router(state: ServerState) -> axum::Router {
                 let resp: Response = control.oneshot(req).await.into_response();
                 resp
             } else {
-                bad_gateway()
+                let resp: Response = proxy.oneshot(req).await.into_response();
+                resp
             }
         },
     )
@@ -97,10 +90,14 @@ mod tests {
         (ServerState::new(tx), rx)
     }
 
+    fn stub_proxy() -> axum::Router {
+        axum::Router::new().fallback(|| async { (StatusCode::BAD_GATEWAY, "no backend") })
+    }
+
     #[tokio::test]
     async fn ping_returns_ok() {
         let (state, _rx) = test_state();
-        let app = dispatch_router(state);
+        let app = dispatch_router(state, stub_proxy());
 
         let req = Request::builder()
             .uri("/ping")
@@ -119,7 +116,7 @@ mod tests {
     #[tokio::test]
     async fn stop_returns_ok_and_triggers_shutdown() {
         let (state, rx) = test_state();
-        let app = dispatch_router(state);
+        let app = dispatch_router(state, stub_proxy());
 
         let req = Request::builder()
             .method("POST")
@@ -142,7 +139,7 @@ mod tests {
     #[tokio::test]
     async fn unknown_route_returns_404() {
         let (state, _rx) = test_state();
-        let app = dispatch_router(state);
+        let app = dispatch_router(state, stub_proxy());
 
         let req = Request::builder()
             .uri("/nonexistent")
@@ -161,7 +158,7 @@ mod tests {
     #[tokio::test]
     async fn non_control_host_returns_502() {
         let (state, _rx) = test_state();
-        let app = dispatch_router(state);
+        let app = dispatch_router(state, stub_proxy());
 
         let req = Request::builder()
             .uri("/ping")
@@ -176,7 +173,7 @@ mod tests {
     #[tokio::test]
     async fn no_host_returns_502() {
         let (state, _rx) = test_state();
-        let app = dispatch_router(state);
+        let app = dispatch_router(state, stub_proxy());
 
         let req = Request::builder().uri("/ping").body(Body::empty()).unwrap();
 
