@@ -50,6 +50,16 @@
 - Teardown mapping on exit. Use sidecar pattern to monitor the child process and ensure cleanup happens even if the child process is killed.
   - Follow `mairu exec` pattern
 
+### Fill the gap with Portless
+
+- Fancy but minimal html pages for humans
+  - Error pages
+  - Index of hosted pages
+
+### Utilities
+
+- `trustless list` to list current routes
+
 ### Release Engineering
 
 - GitHub Actions for releasing binaries and crates to crates.io
