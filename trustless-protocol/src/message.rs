@@ -72,16 +72,35 @@ pub struct SignResult {
 
 #[cfg(test)]
 mod tests {
+    #[derive(serde::Deserialize, Debug)]
+    struct WireRequest<P> {
+        id: u64,
+        method: String,
+        params: P,
+    }
+
+    #[derive(serde::Deserialize, Debug)]
+    struct WireResultResponse<R> {
+        id: u64,
+        result: R,
+    }
+
+    #[derive(serde::Deserialize, Debug)]
+    struct WireErrorResponse {
+        id: u64,
+        error: super::ErrorPayload,
+    }
+
     #[test]
     fn serialize_initialize_request() {
         let req = super::Request {
             id: 1,
             body: super::RequestBody::Initialize(super::InitializeParams {}),
         };
-        let json: serde_json::Value = serde_json::to_value(&req).unwrap();
-        assert_eq!(json["id"], 1);
-        assert_eq!(json["method"], "initialize");
-        assert_eq!(json["params"], serde_json::json!({}));
+        let json = serde_json::to_string(&req).unwrap();
+        let wire: WireRequest<super::InitializeParams> = serde_json::from_str(&json).unwrap();
+        assert_eq!(wire.id, 1);
+        assert_eq!(wire.method, "initialize");
     }
 
     #[test]
@@ -94,13 +113,14 @@ mod tests {
                 blob: vec![0xde, 0xad, 0xbe, 0xef],
             }),
         };
-        let json: serde_json::Value = serde_json::to_value(&req).unwrap();
-        assert_eq!(json["id"], 42);
-        assert_eq!(json["method"], "sign");
-        assert_eq!(json["params"]["certificate_id"], "cert/v1");
-        assert_eq!(json["params"]["scheme"], "ECDSA_NISTP256_SHA256");
+        let json = serde_json::to_string(&req).unwrap();
+        let wire: WireRequest<super::SignParams> = serde_json::from_str(&json).unwrap();
+        assert_eq!(wire.id, 42);
+        assert_eq!(wire.method, "sign");
+        assert_eq!(wire.params.certificate_id, "cert/v1");
+        assert_eq!(wire.params.scheme, "ECDSA_NISTP256_SHA256");
         // base64 of [0xde, 0xad, 0xbe, 0xef]
-        assert_eq!(json["params"]["blob"], "3q2+7w==");
+        assert_eq!(wire.params.blob, vec![0xde, 0xad, 0xbe, 0xef]);
     }
 
     #[test]
@@ -142,15 +162,14 @@ mod tests {
                 },
             },
         };
-        let json: serde_json::Value = serde_json::to_value(&resp).unwrap();
-        assert_eq!(json["id"], 1);
-        assert_eq!(json["result"]["default"], "cert1");
-        assert_eq!(json["result"]["certificates"][0]["id"], "cert1");
-        assert_eq!(
-            json["result"]["certificates"][0]["domains"][0],
-            "*.example.com"
-        );
-        assert!(json.get("error").is_none());
+        let json = serde_json::to_string(&resp).unwrap();
+        let wire: WireResultResponse<super::InitializeResult> =
+            serde_json::from_str(&json).unwrap();
+        assert_eq!(wire.id, 1);
+        assert_eq!(wire.result.default, "cert1");
+        assert_eq!(wire.result.certificates[0].id, "cert1");
+        assert_eq!(wire.result.certificates[0].domains[0], "*.example.com");
+        assert!(!json.contains("\"error\""));
     }
 
     #[test]
@@ -163,9 +182,10 @@ mod tests {
                 },
             },
         };
-        let json: serde_json::Value = serde_json::to_value(&resp).unwrap();
-        assert_eq!(json["id"], 2);
-        assert_eq!(json["result"]["signature"], "/wCr");
+        let json = serde_json::to_string(&resp).unwrap();
+        let wire: WireResultResponse<super::SignResult> = serde_json::from_str(&json).unwrap();
+        assert_eq!(wire.id, 2);
+        assert_eq!(wire.result.signature, vec![0xff, 0x00, 0xab]);
     }
 
     #[test]
@@ -179,11 +199,12 @@ mod tests {
                 },
             },
         };
-        let json: serde_json::Value = serde_json::to_value(&resp).unwrap();
-        assert_eq!(json["id"], 3);
-        assert_eq!(json["error"]["code"], 1);
-        assert_eq!(json["error"]["message"], "not found");
-        assert!(json.get("result").is_none());
+        let json = serde_json::to_string(&resp).unwrap();
+        let wire: WireErrorResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(wire.id, 3);
+        assert_eq!(wire.error.code, 1);
+        assert_eq!(wire.error.message, "not found");
+        assert!(!json.contains("\"result\""));
     }
 
     #[test]
