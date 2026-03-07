@@ -60,6 +60,7 @@ jobs:
       - uses: step-security/setup-zig@190f429650adf2a785549867b458a8a37b0077a4 # v2.2.1
       - run: cargo binstall --no-confirm cargo-lambda
       - run: cargo lambda build --release --${{ matrix.lambda-arch }} --output-format zip -p trustless-provider-lambda-function
-      - run: gh release upload "${{ github.ref_name }}" "target/lambda/bootstrap/bootstrap.zip#trustless-provider-lambda-function.${{ matrix.arch-suffix }}.zip" --clobber
+      - run: mv "target/lambda/bootstrap/bootstrap.zip" "target/lambda/bootstrap/trustless-provider-lambda-function.${{ matrix.arch-suffix }}.zip"
+      - run: gh release upload "${{ github.ref_name }}" "target/lambda/bootstrap/trustless-provider-lambda-function.${{ matrix.arch-suffix }}.zip" --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
