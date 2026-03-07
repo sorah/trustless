@@ -22,6 +22,35 @@ pub struct ExecArgs {
     command: Vec<std::ffi::OsString>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) enum HostnameSpec {
+    /// Subdomain label — will be combined with a wildcard domain via resolve_hostname
+    Label(String),
+    /// Full FQDN — used directly, bypasses resolve_hostname
+    Full(String),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ExecParams {
+    pub hostname_spec: HostnameSpec,
+    pub profile: Option<String>,
+    pub domain: Option<String>,
+    pub port: Option<u16>,
+    pub command: Vec<std::ffi::OsString>,
+}
+
+impl From<ExecArgs> for ExecParams {
+    fn from(args: ExecArgs) -> Self {
+        Self {
+            hostname_spec: HostnameSpec::Label(args.subdomain),
+            profile: args.profile,
+            domain: args.domain,
+            port: args.port,
+            command: args.command,
+        }
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 #[serde(tag = "type")]
 enum ExecIpcMessage {
@@ -37,17 +66,22 @@ enum ExecIpcMessage {
 
 #[cfg(unix)]
 pub fn run(args: &ExecArgs) -> anyhow::Result<()> {
+    run_exec(ExecParams::from(args.clone()))
+}
+
+#[cfg(unix)]
+pub(crate) fn run_exec(params: ExecParams) -> anyhow::Result<()> {
     let (ipc_i, ipc_o) = make_pipe()?;
     let pid = nix::unistd::Pid::this();
     match unsafe { nix::unistd::fork() }? {
         nix::unistd::ForkResult::Parent { .. } => {
             drop(ipc_o);
-            executor::run(ipc_i, args.clone())
+            executor::run(ipc_i, params)
         }
         nix::unistd::ForkResult::Child => {
             drop(ipc_i);
             start_ignoring_signals();
-            run_sidecar(pid, ipc_o, args.clone())
+            run_sidecar(pid, ipc_o, params)
         }
     }
 }
@@ -80,9 +114,9 @@ cfg_if::cfg_if! {
 async fn run_sidecar(
     parent: nix::unistd::Pid,
     ipc: std::os::fd::OwnedFd,
-    args: ExecArgs,
+    params: ExecParams,
 ) -> anyhow::Result<()> {
-    let main = do_sidecar(ipc, args);
+    let main = do_sidecar(ipc, params);
     let _result = tokio::spawn(main);
     crate::ppid::wait_for_parent_process_die(parent).await?;
     tracing::debug!("sidecar exiting");
@@ -104,8 +138,8 @@ impl Drop for RouteGuard {
     }
 }
 
-async fn do_sidecar(ipc: std::os::fd::OwnedFd, args: ExecArgs) -> anyhow::Result<RouteGuard> {
-    match do_sidecar_inner(&args).await {
+async fn do_sidecar(ipc: std::os::fd::OwnedFd, params: ExecParams) -> anyhow::Result<RouteGuard> {
+    match do_sidecar_inner(&params).await {
         Ok((msg, guard)) => {
             inform_executor(ipc, &msg)?;
             Ok(guard)
@@ -132,12 +166,23 @@ fn inform_executor(ipc_fd: std::os::fd::OwnedFd, message: &ExecIpcMessage) -> an
 }
 
 #[tracing::instrument(name = "exec_sidecar", skip_all)]
-async fn do_sidecar_inner(args: &ExecArgs) -> anyhow::Result<(ExecIpcMessage, RouteGuard)> {
+async fn do_sidecar_inner(params: &ExecParams) -> anyhow::Result<(ExecIpcMessage, RouteGuard)> {
     let client = crate::cmd::proxy::connect_or_start().await?;
     let status = client.status().await?;
 
-    let hostname = resolve_hostname(&status, args)?;
-    let port = match args.port {
+    let hostname = match &params.hostname_spec {
+        HostnameSpec::Label(s) => resolve_hostname(
+            &status,
+            s,
+            params.profile.as_deref(),
+            params.domain.as_deref(),
+        )?,
+        HostnameSpec::Full(h) => {
+            crate::route::validate_hostname(h)?;
+            h.clone()
+        }
+    };
+    let port = match params.port {
         Some(p) => p,
         None => allocate_ephemeral_port()?,
     };
@@ -160,11 +205,13 @@ async fn do_sidecar_inner(args: &ExecArgs) -> anyhow::Result<(ExecIpcMessage, Ro
     Ok((msg, guard))
 }
 
-fn resolve_hostname(
+pub(crate) fn resolve_hostname(
     status: &crate::control::StatusResponse,
-    args: &ExecArgs,
+    subdomain: &str,
+    profile: Option<&str>,
+    domain: Option<&str>,
 ) -> anyhow::Result<String> {
-    let provider = match &args.profile {
+    let provider = match profile {
         Some(name) => status
             .providers
             .iter()
@@ -192,10 +239,10 @@ fn resolve_hostname(
         .filter_map(|d| d.strip_prefix("*."))
         .collect();
 
-    let suffix = match &args.domain {
+    let suffix = match domain {
         Some(domain) => {
-            if wildcard_domains.contains(&domain.as_str()) {
-                domain.as_str()
+            if wildcard_domains.contains(&domain) {
+                domain
             } else {
                 anyhow::bail!(
                     "domain '{}' not found in provider '{}' certificates; available: {}",
@@ -223,7 +270,7 @@ fn resolve_hostname(
         }
     };
 
-    let hostname = format!("{}.{}", args.subdomain, suffix);
+    let hostname = format!("{}.{}", subdomain, suffix);
     crate::route::validate_hostname(&hostname)?;
     Ok(hostname)
 }
@@ -253,7 +300,7 @@ mod executor {
     use super::*;
 
     #[tracing::instrument(name = "exec_executor", skip_all)]
-    pub(super) fn run(ipc_fd: std::os::fd::OwnedFd, args: ExecArgs) -> anyhow::Result<()> {
+    pub(super) fn run(ipc_fd: std::os::fd::OwnedFd, params: ExecParams) -> anyhow::Result<()> {
         use std::io::Read;
 
         tracing::trace!("waiting for information from the sidecar");
@@ -280,7 +327,7 @@ mod executor {
                     "trustless: https://{}:{} -> 127.0.0.1:{}",
                     hostname, proxy_port, port
                 );
-                execute(hostname, port, proxy_port, args)
+                execute(hostname, port, proxy_port, params)
             }
             ExecIpcMessage::Error { message } => {
                 eprintln!("trustless: error: {}", message);
@@ -289,10 +336,15 @@ mod executor {
         }
     }
 
-    fn execute(hostname: String, port: u16, proxy_port: u16, args: ExecArgs) -> anyhow::Result<()> {
+    fn execute(
+        hostname: String,
+        port: u16,
+        proxy_port: u16,
+        params: ExecParams,
+    ) -> anyhow::Result<()> {
         use std::os::unix::process::CommandExt;
 
-        let arg0 = args
+        let arg0 = params
             .command
             .first()
             .ok_or_else(|| anyhow::anyhow!("command cannot be empty"))?;
@@ -307,7 +359,7 @@ mod executor {
         }
 
         let err = std::process::Command::new(arg0)
-            .args(&args.command[1..])
+            .args(&params.command[1..])
             .exec();
         anyhow::bail!("couldn't exec the command line: {}", err);
     }
@@ -390,14 +442,7 @@ mod tests {
     #[test]
     fn test_resolve_hostname_single_provider_single_wildcard() {
         let status = make_status(vec![make_provider("default", vec!["*.dev.invalid"])]);
-        let args = ExecArgs {
-            subdomain: "api".to_string(),
-            profile: None,
-            domain: None,
-            port: None,
-            command: vec![],
-        };
-        let hostname = resolve_hostname(&status, &args).unwrap();
+        let hostname = resolve_hostname(&status, "api", None, None).unwrap();
         assert_eq!(hostname, "api.dev.invalid");
     }
 
@@ -407,14 +452,7 @@ mod tests {
             make_provider("alpha", vec!["*.alpha.invalid"]),
             make_provider("beta", vec!["*.beta.invalid"]),
         ]);
-        let args = ExecArgs {
-            subdomain: "app".to_string(),
-            profile: Some("beta".to_string()),
-            domain: None,
-            port: None,
-            command: vec![],
-        };
-        let hostname = resolve_hostname(&status, &args).unwrap();
+        let hostname = resolve_hostname(&status, "app", Some("beta"), None).unwrap();
         assert_eq!(hostname, "app.beta.invalid");
     }
 
@@ -424,28 +462,14 @@ mod tests {
             "default",
             vec!["*.a.invalid", "*.b.invalid"],
         )]);
-        let args = ExecArgs {
-            subdomain: "app".to_string(),
-            profile: None,
-            domain: Some("b.invalid".to_string()),
-            port: None,
-            command: vec![],
-        };
-        let hostname = resolve_hostname(&status, &args).unwrap();
+        let hostname = resolve_hostname(&status, "app", None, Some("b.invalid")).unwrap();
         assert_eq!(hostname, "app.b.invalid");
     }
 
     #[test]
     fn test_resolve_hostname_no_providers() {
         let status = make_status(vec![]);
-        let args = ExecArgs {
-            subdomain: "app".to_string(),
-            profile: None,
-            domain: None,
-            port: None,
-            command: vec![],
-        };
-        let err = resolve_hostname(&status, &args).unwrap_err();
+        let err = resolve_hostname(&status, "app", None, None).unwrap_err();
         assert!(err.to_string().contains("no providers configured"));
     }
 
@@ -455,14 +479,7 @@ mod tests {
             make_provider("a", vec!["*.a.invalid"]),
             make_provider("b", vec!["*.b.invalid"]),
         ]);
-        let args = ExecArgs {
-            subdomain: "app".to_string(),
-            profile: None,
-            domain: None,
-            port: None,
-            command: vec![],
-        };
-        let err = resolve_hostname(&status, &args).unwrap_err();
+        let err = resolve_hostname(&status, "app", None, None).unwrap_err();
         assert!(err.to_string().contains("--profile"));
     }
 
@@ -472,42 +489,21 @@ mod tests {
             "default",
             vec!["*.a.invalid", "*.b.invalid"],
         )]);
-        let args = ExecArgs {
-            subdomain: "app".to_string(),
-            profile: None,
-            domain: None,
-            port: None,
-            command: vec![],
-        };
-        let err = resolve_hostname(&status, &args).unwrap_err();
+        let err = resolve_hostname(&status, "app", None, None).unwrap_err();
         assert!(err.to_string().contains("--domain"));
     }
 
     #[test]
     fn test_resolve_hostname_profile_not_found() {
         let status = make_status(vec![make_provider("default", vec!["*.dev.invalid"])]);
-        let args = ExecArgs {
-            subdomain: "app".to_string(),
-            profile: Some("nonexistent".to_string()),
-            domain: None,
-            port: None,
-            command: vec![],
-        };
-        let err = resolve_hostname(&status, &args).unwrap_err();
+        let err = resolve_hostname(&status, "app", Some("nonexistent"), None).unwrap_err();
         assert!(err.to_string().contains("nonexistent"));
     }
 
     #[test]
     fn test_resolve_hostname_domain_not_found() {
         let status = make_status(vec![make_provider("default", vec!["*.dev.invalid"])]);
-        let args = ExecArgs {
-            subdomain: "app".to_string(),
-            profile: None,
-            domain: Some("other.invalid".to_string()),
-            port: None,
-            command: vec![],
-        };
-        let err = resolve_hostname(&status, &args).unwrap_err();
+        let err = resolve_hostname(&status, "app", None, Some("other.invalid")).unwrap_err();
         assert!(err.to_string().contains("other.invalid"));
     }
 }

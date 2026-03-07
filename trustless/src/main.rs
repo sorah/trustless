@@ -17,6 +17,8 @@ enum Cli {
     TestProvider(trustless::cmd::test_provider::TestProviderArgs),
     /// Run a command behind the HTTPS proxy
     Exec(trustless::cmd::exec::ExecArgs),
+    /// Run a command behind the HTTPS proxy (auto-infer subdomain name)
+    Run(trustless::cmd::run::RunArgs),
 }
 
 fn main() -> Result<std::process::ExitCode, anyhow::Error> {
@@ -50,6 +52,7 @@ fn main() -> Result<std::process::ExitCode, anyhow::Error> {
         Cli::Status(_) => enable_log(LogType::Custom),
         Cli::TestProvider(_) => enable_log(LogType::Custom),
         Cli::Exec(_) => enable_log(LogType::Custom),
+        Cli::Run(_) => enable_log(LogType::Custom),
     }
 
     let retval = match cli {
@@ -59,6 +62,7 @@ fn main() -> Result<std::process::ExitCode, anyhow::Error> {
         Cli::Status(args) => trustless::cmd::status::run(&args),
         Cli::TestProvider(args) => trustless::cmd::test_provider::run(&args),
         Cli::Exec(args) => trustless::cmd::exec::run(&args),
+        Cli::Run(args) => trustless::cmd::run::run(&args),
     };
     match retval {
         Ok(_) => Ok(std::process::ExitCode::SUCCESS),

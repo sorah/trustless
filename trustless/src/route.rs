@@ -77,6 +77,41 @@ pub fn validate_hostname(host: &str) -> Result<(), RouteError> {
     Ok(())
 }
 
+/// Sanitize an arbitrary string into a valid DNS label.
+/// Lowercases, replaces invalid characters with hyphens, collapses consecutive
+/// hyphens, and trims leading/trailing hyphens. Returns `None` if the result is empty.
+pub fn sanitize_label(input: &str) -> Option<String> {
+    let s: String = input
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let trimmed = s.trim_matches('-');
+    let mut result = String::with_capacity(trimmed.len());
+    let mut prev_hyphen = false;
+    for c in trimmed.chars() {
+        if c == '-' {
+            if !prev_hyphen {
+                result.push('-');
+            }
+            prev_hyphen = true;
+        } else {
+            result.push(c);
+            prev_hyphen = false;
+        }
+    }
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
+}
+
 pub fn strip_port(host: &str) -> &str {
     if let Some(rest) = host.strip_prefix('[') {
         // Bracketed IPv6: [::1]:8080 or [::1]
@@ -437,6 +472,25 @@ mod tests {
 
         let resolved = table.resolve("nonexistent.host").unwrap();
         assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn test_sanitize_label() {
+        assert_eq!(sanitize_label("MyApp"), Some("myapp".to_string()));
+        assert_eq!(sanitize_label("my_app"), Some("my-app".to_string()));
+        assert_eq!(sanitize_label("my app"), Some("my-app".to_string()));
+        assert_eq!(sanitize_label("my--app"), Some("my-app".to_string()));
+        assert_eq!(sanitize_label("a___b"), Some("a-b".to_string()));
+        assert_eq!(sanitize_label("--myapp--"), Some("myapp".to_string()));
+        assert_eq!(sanitize_label("@myapp!"), Some("myapp".to_string()));
+        assert_eq!(sanitize_label("@@@"), None);
+        assert_eq!(sanitize_label("---"), None);
+        assert_eq!(sanitize_label(""), None);
+        assert_eq!(sanitize_label("my-app-123"), Some("my-app-123".to_string()));
+        assert_eq!(
+            sanitize_label("My_Feature_Branch"),
+            Some("my-feature-branch".to_string())
+        );
     }
 
     #[test]
