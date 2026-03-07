@@ -47,9 +47,11 @@ flowchart TD
 
 ## Quick Start
 
-### 1. Deploy a key provider
+### 1. Set up a key provider
 
-See [AWS Lambda Provider](docs/lambda-provider.md) for a ready-made provider using Lambda and S3, or [Writing a Key Provider](docs/writing-key-provider.md) to build your own.
+The easiest option for solo use is the [Filesystem Provider](docs/filesystem-provider.md) -- point it at a directory containing your wildcard certificate and key.
+
+For team use with access control and instant revocation, see the [AWS Lambda Provider](docs/lambda-provider.md). You can also [write your own](docs/writing-key-provider.md).
 
 ### 2. Setup DNS
 
