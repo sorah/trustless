@@ -21,7 +21,7 @@ async fn main() -> Result<(), lambda_runtime::Error> {
     let s3_client = aws_sdk_s3::Client::new(&aws_config);
     let ssm_client = aws_sdk_ssm::Client::new(&aws_config);
 
-    let state = crate::state::AppState::new(config, s3_client, ssm_client);
+    let state = crate::state::new_app_state(config, s3_client, ssm_client);
     let state_ref = &state;
 
     lambda_runtime::run(lambda_runtime::service_fn(|event| async move {

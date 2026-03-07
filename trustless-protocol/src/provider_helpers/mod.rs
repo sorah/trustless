@@ -1,7 +1,9 @@
+mod backend;
 mod certificate;
 #[cfg(feature = "encrypted-key")]
 mod encrypted_key;
 
+pub use backend::*;
 pub use certificate::*;
 #[cfg(feature = "encrypted-key")]
 pub use encrypted_key::*;

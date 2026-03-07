@@ -1,47 +1,14 @@
-use std::collections::HashMap;
-
 use crate::config::{AppConfig, S3Prefix};
 use crate::error::AppError;
 
-struct CertCache {
-    certs: HashMap<String, trustless_protocol::provider_helpers::Certificate>,
-    current_ids: Vec<(usize, String)>,
-    initialized: bool,
-}
-
-impl CertCache {
-    fn new() -> Self {
-        Self {
-            certs: HashMap::new(),
-            current_ids: Vec::new(),
-            initialized: false,
-        }
-    }
-}
-
-pub(crate) struct AppState {
+pub(crate) struct S3Source {
     config: AppConfig,
     s3_client: aws_sdk_s3::Client,
     ssm_client: aws_sdk_ssm::Client,
-    cache: tokio::sync::RwLock<CertCache>,
     ssm_passphrase: tokio::sync::OnceCell<secrecy::SecretString>,
 }
 
-impl AppState {
-    pub(crate) fn new(
-        config: AppConfig,
-        s3_client: aws_sdk_s3::Client,
-        ssm_client: aws_sdk_ssm::Client,
-    ) -> Self {
-        Self {
-            config,
-            s3_client,
-            ssm_client,
-            cache: tokio::sync::RwLock::new(CertCache::new()),
-            ssm_passphrase: tokio::sync::OnceCell::new(),
-        }
-    }
-
+impl S3Source {
     async fn get_passphrase(&self) -> Result<&secrecy::SecretString, AppError> {
         self.ssm_passphrase
             .get_or_try_init(|| async {
@@ -133,8 +100,31 @@ impl AppState {
         let passphrase = self.get_passphrase().await?;
         Ok(Some(passphrase.expose_secret().to_owned()))
     }
+}
 
-    async fn load_cert_from_s3(
+impl trustless_protocol::provider_helpers::CertificateSource for S3Source {
+    type SourceId = S3Prefix;
+    type Error = AppError;
+
+    fn sources(&self) -> &[S3Prefix] {
+        &self.config.s3_urls
+    }
+
+    async fn fetch_current_id(&self, prefix: &S3Prefix) -> Result<String, AppError> {
+        let current_key = format!("{}current", prefix.key_prefix);
+        let text = self
+            .fetch_s3_text(&prefix.bucket, &current_key)
+            .await?
+            .ok_or_else(|| {
+                AppError::S3(format!(
+                    "'current' object not found at {}/{}",
+                    prefix.bucket, current_key,
+                ))
+            })?;
+        Ok(text.trim().to_owned())
+    }
+
+    async fn load_certificate(
         &self,
         prefix: &S3Prefix,
         cert_id: &str,
@@ -177,131 +167,21 @@ impl AppState {
         tracing::info!(cert_id, domains = ?cert.domains, "loaded certificate");
         Ok(cert)
     }
+}
 
-    async fn fetch_current_id(&self, prefix: &S3Prefix) -> Result<String, AppError> {
-        let current_key = format!("{}current", prefix.key_prefix);
-        let text = self
-            .fetch_s3_text(&prefix.bucket, &current_key)
-            .await?
-            .ok_or_else(|| {
-                AppError::S3(format!(
-                    "'current' object not found at {}/{}",
-                    prefix.bucket, current_key,
-                ))
-            })?;
-        Ok(text.trim().to_owned())
-    }
+pub(crate) type AppState = trustless_protocol::provider_helpers::CachingBackend<S3Source>;
 
-    pub(crate) async fn do_initialize(
-        &self,
-    ) -> Result<trustless_protocol::message::InitializeResult, AppError> {
-        let mut cache = self.cache.write().await;
-
-        if cache.initialized {
-            // Warm path: check for changes
-            tracing::debug!("warm initialize: checking for current ID changes");
-            let mut changed = false;
-            for (idx, old_id) in cache.current_ids.clone() {
-                let prefix = &self.config.s3_urls[idx];
-                let new_id = self.fetch_current_id(prefix).await?;
-                if new_id != old_id {
-                    tracing::info!(
-                        idx,
-                        old_id,
-                        new_id,
-                        "current ID changed, fetching new certificate"
-                    );
-                    let cert = self.load_cert_from_s3(prefix, &new_id).await?;
-                    cache.certs.remove(&old_id);
-                    cache.certs.insert(new_id.clone(), cert);
-
-                    // Update current_ids entry
-                    if let Some(entry) = cache.current_ids.iter_mut().find(|(i, _)| *i == idx) {
-                        entry.1 = new_id;
-                    }
-                    changed = true;
-                }
-            }
-            if !changed {
-                tracing::debug!("warm initialize: no changes detected");
-            }
-        } else {
-            // Cold path: fetch all
-            tracing::info!("cold initialize: fetching all certificates from S3");
-            for (idx, prefix) in self.config.s3_urls.iter().enumerate() {
-                let cert_id = self.fetch_current_id(prefix).await?;
-                let cert = self.load_cert_from_s3(prefix, &cert_id).await?;
-                cache.certs.insert(cert_id.clone(), cert);
-                cache.current_ids.push((idx, cert_id));
-            }
-            cache.initialized = true;
-        }
-
-        // Build response: first URL's cert is default
-        let default_id = cache
-            .current_ids
-            .first()
-            .map(|(_, id)| id.clone())
-            .ok_or_else(|| AppError::Config("no certificates configured".to_owned()))?;
-
-        let certificates: Vec<trustless_protocol::message::CertificateInfo> = cache
-            .current_ids
-            .iter()
-            .filter_map(|(_, id)| cache.certs.get(id))
-            .map(|c| c.to_certificate_info())
-            .collect();
-
-        Ok(trustless_protocol::message::InitializeResult {
-            default: default_id,
-            certificates,
-        })
-    }
-
-    pub(crate) async fn do_sign(
-        &self,
-        params: &trustless_protocol::message::SignParams,
-    ) -> Result<trustless_protocol::message::SignResult, AppError> {
-        // Try cache first
-        {
-            let cache = self.cache.read().await;
-            if let Some(cert) = cache.certs.get(&params.certificate_id) {
-                return Ok(cert.sign(params)?);
-            }
-        }
-
-        // Not in cache — try to load on demand (sign-before-initialize race on cold start)
-        tracing::info!(
-            certificate_id = %params.certificate_id,
-            "certificate not in cache, attempting on-demand load"
-        );
-
-        // Search through S3 prefixes to find this cert
-        for (idx, prefix) in self.config.s3_urls.iter().enumerate() {
-            let current_id = match self.fetch_current_id(prefix).await {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
-            if current_id == params.certificate_id {
-                let cert = self.load_cert_from_s3(prefix, &current_id).await?;
-                let result = cert.sign(params)?;
-
-                // Cache it
-                let mut cache = self.cache.write().await;
-                if !cache.current_ids.iter().any(|(i, _)| *i == idx) {
-                    cache.current_ids.push((idx, current_id.clone()));
-                }
-                cache.certs.insert(current_id, cert);
-
-                return Ok(result);
-            }
-        }
-
-        Err(AppError::Provider(
-            trustless_protocol::provider_helpers::ProviderHelperError::CertificateNotFound(
-                params.certificate_id.clone(),
-            ),
-        ))
-    }
+pub(crate) fn new_app_state(
+    config: AppConfig,
+    s3_client: aws_sdk_s3::Client,
+    ssm_client: aws_sdk_ssm::Client,
+) -> AppState {
+    trustless_protocol::provider_helpers::CachingBackend::new(S3Source {
+        config,
+        s3_client,
+        ssm_client,
+        ssm_passphrase: tokio::sync::OnceCell::new(),
+    })
 }
 
 #[cfg(test)]
@@ -329,7 +209,7 @@ mod tests {
         s3_client: aws_sdk_s3::Client,
         ssm_client: aws_sdk_ssm::Client,
     ) -> AppState {
-        AppState::new(
+        new_app_state(
             AppConfig {
                 method: "s3".to_owned(),
                 s3_urls,
@@ -383,7 +263,7 @@ mod tests {
             ssm_client,
         );
 
-        let result = state.do_initialize().await.unwrap();
+        let result = state.initialize().await.unwrap();
         assert_eq!(result.default, "cert-v1");
         assert_eq!(result.certificates.len(), 1);
         assert_eq!(result.certificates[0].id, "cert-v1");
@@ -425,11 +305,11 @@ mod tests {
         );
 
         // Cold init
-        let result1 = state.do_initialize().await.unwrap();
+        let result1 = state.initialize().await.unwrap();
         assert_eq!(result1.default, "cert-v1");
 
         // Warm init (unchanged)
-        let result2 = state.do_initialize().await.unwrap();
+        let result2 = state.initialize().await.unwrap();
         assert_eq!(result2.default, "cert-v1");
         assert_eq!(result2.certificates.len(), 1);
     }
@@ -480,10 +360,10 @@ mod tests {
             ssm_client,
         );
 
-        let result1 = state.do_initialize().await.unwrap();
+        let result1 = state.initialize().await.unwrap();
         assert_eq!(result1.certificates[0].domains, vec!["v1.example.com"]);
 
-        let result2 = state.do_initialize().await.unwrap();
+        let result2 = state.initialize().await.unwrap();
         assert_eq!(result2.default, "cert-v2");
         assert_eq!(result2.certificates[0].domains, vec!["v2.example.com"]);
     }
@@ -516,12 +396,12 @@ mod tests {
         );
 
         // Initialize first
-        let init_result = state.do_initialize().await.unwrap();
+        let init_result = state.initialize().await.unwrap();
         let scheme = init_result.certificates[0].schemes[0].clone();
 
         // Sign
         let sign_result = state
-            .do_sign(&trustless_protocol::message::SignParams {
+            .sign(&trustless_protocol::message::SignParams {
                 certificate_id: "cert-v1".to_owned(),
                 scheme,
                 blob: vec![1, 2, 3, 4],
@@ -554,7 +434,7 @@ mod tests {
         );
 
         let err = state
-            .do_sign(&trustless_protocol::message::SignParams {
+            .sign(&trustless_protocol::message::SignParams {
                 certificate_id: "nonexistent".to_owned(),
                 scheme: "ECDSA_NISTP256_SHA256".to_owned(),
                 blob: vec![1, 2, 3],
@@ -593,10 +473,10 @@ mod tests {
             ssm_client,
         );
 
-        state.do_initialize().await.unwrap();
+        state.initialize().await.unwrap();
 
         let err = state
-            .do_sign(&trustless_protocol::message::SignParams {
+            .sign(&trustless_protocol::message::SignParams {
                 certificate_id: "cert-v1".to_owned(),
                 scheme: "NONEXISTENT_SCHEME".to_owned(),
                 blob: vec![1, 2, 3],
@@ -640,7 +520,7 @@ mod tests {
             ssm_client,
         );
 
-        let result = state.do_initialize().await.unwrap();
+        let result = state.initialize().await.unwrap();
         assert_eq!(result.certificates[0].id, "cert-v1");
         assert_eq!(result.certificates[0].domains, vec!["test.example.com"]);
     }

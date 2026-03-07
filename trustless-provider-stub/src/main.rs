@@ -1,13 +1,38 @@
-struct StubHandler {
-    default: String,
-    certs: Vec<trustless_protocol::provider_helpers::Certificate>,
+#[derive(Debug, thiserror::Error)]
+enum StubError {
+    #[error("provider error: {0}")]
+    Provider(#[from] trustless_protocol::provider_helpers::ProviderHelperError),
+
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
 }
 
-impl StubHandler {
-    fn load(cert_dir: &std::path::Path, passphrase: Option<String>) -> anyhow::Result<Self> {
+impl From<StubError> for trustless_protocol::message::ErrorPayload {
+    fn from(e: StubError) -> Self {
+        match e {
+            StubError::Provider(pe) => pe.into(),
+            other => trustless_protocol::message::ErrorPayload {
+                code: -1,
+                message: other.to_string(),
+            },
+        }
+    }
+}
+
+struct CertSourceEntry {
+    path: std::path::PathBuf,
+    domain_name: String,
+}
+
+struct FilesystemSource {
+    sources: Vec<CertSourceEntry>,
+    passphrase: Option<String>,
+}
+
+impl FilesystemSource {
+    fn scan(cert_dir: &std::path::Path, passphrase: Option<String>) -> anyhow::Result<Self> {
         let certs_dir = cert_dir.join("certs");
-        let mut certs = Vec::new();
-        let mut default = None;
+        let mut sources = Vec::new();
 
         let mut entries: Vec<_> = std::fs::read_dir(&certs_dir)?
             .filter_map(|e| e.ok())
@@ -26,74 +51,65 @@ impl StubHandler {
                 .ok_or_else(|| anyhow::anyhow!("non-utf8 directory name"))?
                 .to_owned();
 
-            let current_path = path.join("current");
-            let version = std::fs::read_to_string(&current_path)
-                .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", current_path.display()))?
-                .trim()
-                .to_owned();
-
-            let version_dir = path.join(&version);
-
-            let fullchain_pem = match std::fs::read_to_string(version_dir.join("fullchain.pem")) {
-                Ok(pem) => pem,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    std::fs::read_to_string(version_dir.join("cert.pem"))?
-                }
-                Err(e) => return Err(e.into()),
-            };
-            let key_pem = std::fs::read(version_dir.join("key.pem"))?;
-
-            let id = format!("{domain_name}/{version}");
-            let cert = trustless_protocol::provider_helpers::Certificate::from_pem_with_passphrase(
-                id.clone(),
-                fullchain_pem,
-                &key_pem,
-                passphrase.as_deref(),
-            )?;
-
-            if default.is_none() {
-                default = Some(id);
-            }
-
-            certs.push(cert);
+            sources.push(CertSourceEntry { path, domain_name });
         }
 
-        let default = default.ok_or_else(|| anyhow::anyhow!("no certificates found"))?;
+        if sources.is_empty() {
+            anyhow::bail!("no certificates found");
+        }
 
-        Ok(Self { default, certs })
+        Ok(Self {
+            sources,
+            passphrase,
+        })
     }
 }
 
-impl trustless_protocol::handler::Handler for StubHandler {
-    async fn initialize(
-        &self,
-    ) -> Result<
-        trustless_protocol::message::InitializeResult,
-        trustless_protocol::message::ErrorPayload,
-    > {
-        Ok(
-            trustless_protocol::provider_helpers::build_initialize_result(
-                &self.default,
-                &self.certs,
-            ),
-        )
+impl trustless_protocol::provider_helpers::CertificateSource for FilesystemSource {
+    type SourceId = CertSourceEntry;
+    type Error = StubError;
+
+    fn sources(&self) -> &[CertSourceEntry] {
+        &self.sources
     }
 
-    async fn sign(
-        &self,
-        params: trustless_protocol::message::SignParams,
-    ) -> Result<trustless_protocol::message::SignResult, trustless_protocol::message::ErrorPayload>
-    {
-        let cert = self
-            .certs
-            .iter()
-            .find(|c| c.id == params.certificate_id)
-            .ok_or_else(|| trustless_protocol::message::ErrorPayload {
-                code: 1,
-                message: format!("certificate not found: {}", params.certificate_id),
-            })?;
+    async fn fetch_current_id(&self, source: &CertSourceEntry) -> Result<String, StubError> {
+        let current_path = source.path.join("current");
+        let version = std::fs::read_to_string(&current_path)?.trim().to_owned();
+        let id = format!("{}/{version}", source.domain_name);
+        Ok(id)
+    }
 
-        cert.sign(&params).map_err(Into::into)
+    async fn load_certificate(
+        &self,
+        source: &CertSourceEntry,
+        cert_id: &str,
+    ) -> Result<trustless_protocol::provider_helpers::Certificate, StubError> {
+        // cert_id is "{domain_name}/{version}", extract version
+        let version = cert_id
+            .strip_prefix(&source.domain_name)
+            .and_then(|s| s.strip_prefix('/'))
+            .unwrap_or(cert_id);
+
+        let version_dir = source.path.join(version);
+
+        let fullchain_pem = match std::fs::read_to_string(version_dir.join("fullchain.pem")) {
+            Ok(pem) => pem,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::read_to_string(version_dir.join("cert.pem"))?
+            }
+            Err(e) => return Err(e.into()),
+        };
+        let key_pem = std::fs::read(version_dir.join("key.pem"))?;
+
+        let cert = trustless_protocol::provider_helpers::Certificate::from_pem_with_passphrase(
+            cert_id.to_owned(),
+            fullchain_pem,
+            &key_pem,
+            self.passphrase.as_deref(),
+        )?;
+
+        Ok(cert)
     }
 }
 
@@ -117,15 +133,12 @@ async fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
     let passphrase = std::env::var("TRUSTLESS_KEY_PASSPHRASE").ok();
-    let handler = StubHandler::load(&args.cert_dir, passphrase)?;
+    let source = FilesystemSource::scan(&args.cert_dir, passphrase)?;
 
-    tracing::info!(
-        default = %handler.default,
-        count = handler.certs.len(),
-        "loaded certificates"
-    );
+    tracing::info!(count = source.sources.len(), "loaded certificate sources");
 
-    trustless_protocol::handler::run(handler).await?;
+    let backend = trustless_protocol::provider_helpers::CachingBackend::new(source);
+    trustless_protocol::handler::run(backend).await?;
 
     Ok(())
 }
@@ -151,7 +164,7 @@ mod tests {
     }
 
     #[test]
-    fn load_extracts_dns_sans_from_certificate() {
+    fn scan_finds_certificate_sources() {
         let dir = setup_cert_dir(
             "example.com",
             "2026-01-01",
@@ -162,17 +175,65 @@ mod tests {
             ],
         );
 
-        let handler = StubHandler::load(dir.path(), None).unwrap();
+        let source = FilesystemSource::scan(dir.path(), None).unwrap();
 
-        assert_eq!(handler.certs.len(), 1);
-        assert_eq!(handler.default, "example.com/2026-01-01");
+        assert_eq!(source.sources.len(), 1);
+        assert_eq!(source.sources[0].domain_name, "example.com");
+    }
 
-        let cert = &handler.certs[0];
-        assert_eq!(cert.id, "example.com/2026-01-01");
+    #[tokio::test]
+    async fn initialize_loads_certs_from_filesystem() {
+        let dir = setup_cert_dir(
+            "example.com",
+            "2026-01-01",
+            vec![
+                "example.com".to_owned(),
+                "*.example.com".to_owned(),
+                "other.example.net".to_owned(),
+            ],
+        );
+
+        let source = FilesystemSource::scan(dir.path(), None).unwrap();
+        let backend = trustless_protocol::provider_helpers::CachingBackend::new(source);
+
+        let result = backend.initialize().await.unwrap();
+
+        assert_eq!(result.default, "example.com/2026-01-01");
+        assert_eq!(result.certificates.len(), 1);
+        assert_eq!(result.certificates[0].id, "example.com/2026-01-01");
         assert_eq!(
-            cert.domains,
+            result.certificates[0].domains,
             vec!["example.com", "*.example.com", "other.example.net"],
         );
+    }
+
+    #[tokio::test]
+    async fn sign_via_caching_backend() {
+        let dir = setup_cert_dir("example.com", "v1", vec!["example.com".to_owned()]);
+
+        let source = FilesystemSource::scan(dir.path(), None).unwrap();
+        let backend = trustless_protocol::provider_helpers::CachingBackend::new(source);
+
+        let init_result = backend.initialize().await.unwrap();
+        let scheme = init_result.certificates[0].schemes[0].clone();
+
+        let sign_result = backend
+            .sign(&trustless_protocol::message::SignParams {
+                certificate_id: "example.com/v1".to_owned(),
+                scheme,
+                blob: vec![1, 2, 3, 4],
+            })
+            .await
+            .unwrap();
+
+        assert!(!sign_result.signature.is_empty());
+    }
+
+    #[test]
+    fn scan_empty_certs_dir_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("certs")).unwrap();
+        assert!(FilesystemSource::scan(dir.path(), None).is_err());
     }
 
     #[test]
@@ -191,8 +252,8 @@ mod tests {
         assert_eq!(entry.domains, vec!["test.example.com"]);
     }
 
-    #[test]
-    fn load_handles_certificate_without_sans() {
+    #[tokio::test]
+    async fn load_handles_certificate_without_sans() {
         let dir = tempfile::tempdir().unwrap();
         let domain_path = dir.path().join("certs").join("bare.test");
         let version_path = domain_path.join("v1");
@@ -206,7 +267,10 @@ mod tests {
         std::fs::write(version_path.join("fullchain.pem"), cert.pem()).unwrap();
         std::fs::write(version_path.join("key.pem"), key_pair.serialize_pem()).unwrap();
 
-        let handler = StubHandler::load(dir.path(), None).unwrap();
-        assert!(handler.certs[0].domains.is_empty());
+        let source = FilesystemSource::scan(dir.path(), None).unwrap();
+        let backend = trustless_protocol::provider_helpers::CachingBackend::new(source);
+
+        let result = backend.initialize().await.unwrap();
+        assert!(result.certificates[0].domains.is_empty());
     }
 }

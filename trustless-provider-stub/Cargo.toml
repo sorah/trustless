@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 trustless-protocol = { workspace = true, features = ["provider-helpers", "encrypted-key"] }
 anyhow.workspace = true
+thiserror.workspace = true
 clap.workspace = true
 tokio.workspace = true
 tracing.workspace = true
