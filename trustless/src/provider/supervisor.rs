@@ -16,6 +16,28 @@ pub(super) struct Supervisor {
 }
 
 impl Supervisor {
+    pub(super) fn new(
+        name: String,
+        profile: crate::config::Profile,
+        registry: ProviderRegistry,
+        cancel: tokio_util::sync::CancellationToken,
+        command_rx: tokio::sync::mpsc::Receiver<SupervisorCommand>,
+        result: SpawnResult,
+    ) -> Self {
+        Self {
+            name,
+            profile,
+            registry,
+            cancel,
+            command_rx,
+            child: result.child,
+            stderr_task: result.stderr_task,
+            stderr_lines: result.stderr_lines,
+            backoff: BACKOFF_INITIAL,
+            healthy_since: Some(std::time::Instant::now()),
+        }
+    }
+
     pub(super) async fn run(mut self) {
         loop {
             self.reset_backoff_if_healthy();
@@ -197,6 +219,77 @@ impl Supervisor {
     async fn respawn(&self) -> Result<SpawnResult, crate::Error> {
         tracing::info!(provider = %self.name, "spawning provider process");
         spawn_init_register(&self.name, &self.profile, &self.registry).await
+    }
+}
+
+/// Entry point for a supervisor that failed its initial spawn. Retries with backoff,
+/// then transitions into the normal supervisor loop once successful.
+pub(super) async fn run_recovering(
+    name: String,
+    profile: crate::config::Profile,
+    registry: ProviderRegistry,
+    cancel: tokio_util::sync::CancellationToken,
+    mut command_rx: tokio::sync::mpsc::Receiver<SupervisorCommand>,
+) {
+    let mut backoff = BACKOFF_INITIAL;
+
+    loop {
+        tracing::info!(provider = %name, delay = ?backoff, "restarting after backoff");
+        tokio::select! {
+            _ = tokio::time::sleep(backoff) => {}
+            _ = cancel.cancelled() => return,
+            Some(cmd) = command_rx.recv() => {
+                match cmd {
+                    SupervisorCommand::Restart { reply } => {
+                        backoff = BACKOFF_INITIAL;
+                        match spawn_init_register(&name, &profile, &registry).await {
+                            Ok(result) => {
+                                let _ = reply.send(Ok(()));
+                                Supervisor::new(name, profile, registry, cancel, command_rx, result)
+                                    .run().await;
+                                return;
+                            }
+                            Err(e) => {
+                                registry.push_error(
+                                    &name,
+                                    ProviderError {
+                                        timestamp: std::time::SystemTime::now(),
+                                        kind: ProviderErrorKind::InitFailure,
+                                        message: format!("manual restart failed: {e}"),
+                                        stderr_snapshot: None,
+                                    },
+                                );
+                                let _ = reply.send(Err(e));
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        match spawn_init_register(&name, &profile, &registry).await {
+            Ok(result) => {
+                tracing::info!(provider = %name, "provider recovered successfully");
+                Supervisor::new(name, profile, registry, cancel, command_rx, result)
+                    .run()
+                    .await;
+                return;
+            }
+            Err(e) => {
+                tracing::error!(provider = %name, "respawn failed: {e}");
+                registry.push_error(
+                    &name,
+                    ProviderError {
+                        timestamp: std::time::SystemTime::now(),
+                        kind: ProviderErrorKind::InitFailure,
+                        message: format!("respawn failed: {e}"),
+                        stderr_snapshot: None,
+                    },
+                );
+                backoff = next_backoff(backoff);
+            }
+        }
     }
 }
 

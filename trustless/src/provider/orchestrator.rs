@@ -31,37 +31,87 @@ impl ProviderOrchestrator {
         name: &str,
         profile: crate::config::Profile,
     ) -> Result<(), crate::Error> {
-        {
-            let supervisors = self.inner.supervisors.lock().unwrap();
-            if supervisors.contains_key(name) {
-                return Err(crate::Error::ProviderAlreadyExists(name.to_owned()));
-            }
-        }
+        self.add_provider_inner(name, profile, false).await
+    }
 
-        let result = spawn_init_register(name, &profile, &self.inner.registry).await?;
+    /// Like `add_provider`, but on initial spawn failure, logs the error and spawns a
+    /// recovery supervisor that retries in the background instead of returning an error.
+    pub async fn add_provider_resilient(
+        &self,
+        name: &str,
+        profile: crate::config::Profile,
+    ) -> Result<(), crate::Error> {
+        self.add_provider_inner(name, profile, true).await
+    }
+
+    async fn add_provider_inner(
+        &self,
+        name: &str,
+        profile: crate::config::Profile,
+        resilient: bool,
+    ) -> Result<(), crate::Error> {
+        self.check_not_exists(name)?;
 
         let cancel = self.inner.cancel.child_token();
         let (command_tx, command_rx) = tokio::sync::mpsc::channel::<SupervisorCommand>(4);
 
-        let supervisor = Supervisor {
-            name: name.to_owned(),
-            profile,
-            registry: self.inner.registry.clone(),
-            cancel,
-            command_rx,
-            child: result.child,
-            stderr_task: result.stderr_task,
-            stderr_lines: result.stderr_lines,
-            backoff: super::supervisor::BACKOFF_INITIAL,
-            healthy_since: Some(std::time::Instant::now()),
+        let task = match spawn_init_register(name, &profile, &self.inner.registry).await {
+            Ok(result) => {
+                let supervisor = Supervisor::new(
+                    name.to_owned(),
+                    profile,
+                    self.inner.registry.clone(),
+                    cancel,
+                    command_rx,
+                    result,
+                );
+                tokio::spawn(supervisor.run())
+            }
+            Err(e) if resilient => {
+                tracing::error!(provider = %name, "initial startup failed, will retry in background: {e}");
+                self.inner
+                    .registry
+                    .register_placeholder(name, super::ProviderState::Restarting);
+                self.inner.registry.push_error(
+                    name,
+                    super::ProviderError {
+                        timestamp: std::time::SystemTime::now(),
+                        kind: super::ProviderErrorKind::InitFailure,
+                        message: format!("initial startup failed: {e}"),
+                        stderr_snapshot: None,
+                    },
+                );
+                tokio::spawn(super::supervisor::run_recovering(
+                    name.to_owned(),
+                    profile,
+                    self.inner.registry.clone(),
+                    cancel,
+                    command_rx,
+                ))
+            }
+            Err(e) => return Err(e),
         };
 
-        let task = tokio::spawn(supervisor.run());
+        self.register_supervisor(name, command_tx, task);
+        Ok(())
+    }
 
+    fn check_not_exists(&self, name: &str) -> Result<(), crate::Error> {
+        let supervisors = self.inner.supervisors.lock().unwrap();
+        if supervisors.contains_key(name) {
+            return Err(crate::Error::ProviderAlreadyExists(name.to_owned()));
+        }
+        Ok(())
+    }
+
+    fn register_supervisor(
+        &self,
+        name: &str,
+        command_tx: tokio::sync::mpsc::Sender<SupervisorCommand>,
+        task: tokio::task::JoinHandle<()>,
+    ) {
         let mut supervisors = self.inner.supervisors.lock().unwrap();
         supervisors.insert(name.to_owned(), SupervisorHandle { command_tx, task });
-
-        Ok(())
     }
 
     /// Kill the current provider process and restart it, bypassing backoff.

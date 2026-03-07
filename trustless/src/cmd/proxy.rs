@@ -81,8 +81,8 @@ async fn run_start_async(args: &ProxyStartArgs) -> anyhow::Result<()> {
     for name in &profile_names {
         let profile = config.load_profile(name)?;
         tracing::info!(provider = %name, "Starting provider");
-        orchestrator.add_provider(name, profile).await?;
-        tracing::info!(provider = %name, "Provider initialized");
+        orchestrator.add_provider_resilient(name, profile).await?;
+        tracing::info!(provider = %name, "Provider started");
     }
     if profile_names.is_empty() {
         tracing::info!("No profiles configured");

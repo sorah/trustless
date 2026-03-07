@@ -141,6 +141,22 @@ impl ProviderRegistry {
         Ok(())
     }
 
+    /// Create a placeholder entry for a provider that has not yet initialized successfully.
+    /// Does nothing if the provider already exists.
+    pub fn register_placeholder(&self, name: &str, state: ProviderState) {
+        let mut inner = self.inner.write().unwrap();
+        inner
+            .providers
+            .entry(name.to_owned())
+            .or_insert(ProviderEntry {
+                signing_handle: SigningHandle::disconnected(),
+                certificates: Vec::new(),
+                default_id: None,
+                state,
+                errors: std::collections::VecDeque::new(),
+            });
+    }
+
     pub fn set_provider_state(&self, name: &str, state: ProviderState) {
         let mut inner = self.inner.write().unwrap();
         if let Some(entry) = inner.providers.get_mut(name) {
