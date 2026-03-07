@@ -57,7 +57,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: dtolnay/rust-toolchain@stable
       - uses: cargo-bins/cargo-binstall@main
-      - uses: mlugg/setup-zig@53fc45b17fe98b52f92ee5ea08ff48a85a3e7eb7 # v1.2.2
+      - uses: step-security/setup-zig@190f429650adf2a785549867b458a8a37b0077a4 # v2.2.1
       - run: cargo binstall --no-confirm cargo-lambda
       - run: cargo lambda build --release --${{ matrix.lambda-arch }} --output-format zip -p trustless-provider-lambda-function
       - run: gh release upload "${{ github.ref_name }}" "target/lambda/bootstrap/bootstrap.zip#trustless-provider-lambda-function.${{ matrix.arch-suffix }}.zip" --clobber
