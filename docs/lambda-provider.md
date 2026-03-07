@@ -109,6 +109,12 @@ Test that the provider works:
 trustless test-provider -- trustless-provider-lambda --function-name my-trustless-provider
 ```
 
+## Authorization
+
+**You are responsible for controlling who can invoke the Lambda function.** Anyone with `lambda:InvokeFunction` permission on the provider function can sign TLS handshakes for its domains -- effectively impersonating them.
+
+Grant `lambda:InvokeFunction` only to developers who need local HTTPS, and revoke it when they no longer need access. This is the primary access control mechanism: revoking IAM permission immediately cuts off signing ability without needing to rotate keys or certificates.
+
 ## How It Works
 
 The provider command is a stateless relay: it translates each key provider protocol message into a synchronous Lambda invocation and returns the response. All caching happens inside the Lambda function, which keeps certificate and key material in memory across warm invocations.
