@@ -1,3 +1,20 @@
 [workspace]
 resolver = "3"
 members = ["trustless", "trustless-protocol", "trustless-provider-stub", "trustless-provider-lambda", "trustless-provider-lambda-function"]
+
+[workspace.dependencies]
+trustless-protocol = { path = "trustless-protocol" }
+anyhow = "1"
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+rcgen = "0.13"
+rustls = { version = "0.23", default-features = false, features = ["std"] }
+rustls-pki-types = { version = "1", features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+x509-parser = "0.16"

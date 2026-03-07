@@ -3,15 +3,16 @@ name = "trustless-provider-stub"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
+publish = false
 
 [dependencies]
-trustless-protocol = { path = "../trustless-protocol", features = ["provider-helpers", "encrypted-key"] }
-anyhow = "1"
-clap = { version = "4", features = ["derive"] }
-tokio = { version = "1", features = ["full"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+trustless-protocol = { workspace = true, features = ["provider-helpers", "encrypted-key"] }
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [dev-dependencies]
-rcgen = "0.13"
+rcgen.workspace = true
 tempfile = "3"
