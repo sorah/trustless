@@ -15,6 +15,7 @@ env:
 jobs:
   upload-binaries:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-musl
@@ -28,6 +29,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Determine binary name from tag
+        id: meta
+        run: echo "bin=${GITHUB_REF_NAME%%/*}" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/setup
         with: { target: "${{ matrix.target }}", rust-toolchain: 'false' }
       - uses: taiki-e/setup-cross-toolchain-action@b8d1a322a6009a2b7220f53996695778eef89b41 # v1.38.0
@@ -35,20 +39,28 @@ jobs:
           target: "${{ matrix.target }}"
       - uses: taiki-e/upload-rust-binary-action@f391289bcff6a7f36b6301c0a74199657bbb4561 # v1.28.0
         with:
-          bin: trustless,trustless-provider-lambda
+          bin: ${{ steps.meta.outputs.bin }}
           target: '${{ matrix.target }}'
           tar: unix
           token: ${{ secrets.GITHUB_TOKEN }}
 
   upload-lambda-function:
     if: startsWith(github.ref_name, 'trustless-provider-lambda/')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lambda-arch: arm64
+            arch-suffix: arm64
+          - lambda-arch: x86-64
+            arch-suffix: x86_64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: dtolnay/rust-toolchain@stable
       - uses: cargo-bins/cargo-binstall@main
       - run: cargo binstall --no-confirm cargo-lambda
-      - run: cargo lambda build --release --arm64 --output-format zip -p trustless-provider-lambda-function
-      - run: gh release upload "${{ github.ref_name }}" target/lambda/bootstrap/bootstrap.zip --clobber
+      - run: cargo lambda build --release --${{ matrix.lambda-arch }} --output-format zip -p trustless-provider-lambda-function
+      - run: gh release upload "${{ github.ref_name }}" "target/lambda/bootstrap/bootstrap.zip#trustless-provider-lambda-function.${{ matrix.arch-suffix }}.zip" --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
