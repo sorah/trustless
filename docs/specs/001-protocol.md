@@ -18,7 +18,7 @@ The key provider protocol is the core abstraction that separates key management 
 
 ### Wire Protocol
 
-The proxy spawns a key provider as a child process and communicates via stdin/stdout using [length-delimited codec](https://docs.rs/tokio-util/latest/tokio_util/codec/length_delimited/index.html) framing with JSON payloads. Provider stderr is inherited (for logging). Each request carries an `id` and `params`; the `method` tag is embedded inside `params`. Responses carry the same `id` with either `result` or `error`.
+The proxy spawns a key provider as a child process and communicates via stdin/stdout using [length-delimited codec](https://docs.rs/tokio-util/latest/tokio_util/codec/length_delimited/index.html) framing with JSON payloads. Provider stderr is inherited (for logging). Each request carries an `id`, `method`, and `params`; the `method` tag is a sibling of `params`. Success responses carry the same `id` and `method` with a `result` object; error responses carry `id` and `error` (no `method` tag).
 
 See `docs/key-provider-protocol.md` for the wire format specification.
 
@@ -141,23 +141,22 @@ trustless-provider-stub/src/main.rs
 
 | Type | Description |
 |---|---|
-| `Request<P>` | Generic envelope with `id: u64` and `params: P` where P implements `RequestParams` |
-| `ReceivedRequest` | Handler-side envelope with `id: u64` and `params: Box<dyn RequestParams>` for typetag dispatch |
-| `RequestParams` trait | Typetag-tagged trait with `tag = "method"`, implemented by `InitializeParams` and `SignParams` |
+| `Request` | Internally-tagged enum (`tag = "method"`): `Initialize { id, params }` or `Sign { id, params }` |
 | `InitializeParams` | Empty struct |
 | `SignParams` | `certificate_id: String`, `blob: Vec<u8>` (base64 via `serde_with`) |
-| `Response<R>` | Envelope with `id: u64` and flattened `ResponseBody<R>` |
-| `ResponseBody<R>` | Untagged enum: `Result { result: R }` or `Error { error: ErrorPayload }` |
+| `Response` | Untagged enum: `Success(SuccessResponse)` or `Error(ErrorResponse)` |
+| `SuccessResponse` | Internally-tagged enum (`tag = "method"`): `Initialize { id, result }` or `Sign { id, result }` |
+| `ErrorResponse` | Struct with `id: u64` and `error: ErrorPayload` |
 | `ErrorPayload` | `code: i64`, `message: String` |
 | `InitializeResult` | `default: String`, `certificates: Vec<CertificateInfo>` |
 | `CertificateInfo` | `id: String`, `domains: Vec<String>`, `pem: String` |
 | `SignResult` | `signature: Vec<u8>` (base64 via `serde_with`) |
 
-Both `Request<P>` and `Response<R>` are generic. The client specifies the concrete params type when sending and the result type when receiving (e.g., `Request<SignParams>`, `Response<SignResult>`). The handler uses `ReceivedRequest` with typetag dispatch to deserialize unknown request types.
+`Request` and `Response` use derived serde impls — no custom `Serialize`/`Deserialize` implementations needed.
 
 **Codec** (`codec.rs`): Thin wrappers around `tokio_util::codec::LengthDelimitedCodec` providing `framed_read`, `framed_write`, `send_message`, and `recv_message` helpers.
 
-**Client** (`client.rs`): `ProviderClient` wraps `Mutex<ProviderClientInner>` holding the framed reader/writer, child process, and a monotonic request ID counter. The private `call<R>` method assigns an ID, sends the request, reads a `Response<R>`, validates the response ID matches, and extracts the result or error.
+**Client** (`client.rs`): `ProviderClient` wraps `Mutex<ProviderClientInner>` holding the framed reader/writer, child process, and a monotonic request ID counter. The private `send_and_recv` method assigns an ID, sends the request, reads a `Response`, validates the response ID matches, and extracts the result or error.
 
 **Handler** (`handler.rs`): The `Handler` trait has two async methods (`initialize`, `sign`). The `run()` function reads requests from stdin in a loop, dispatches to the handler, and writes responses to stdout. EOF on stdin terminates the loop cleanly.
 
@@ -179,7 +178,7 @@ Signing: offers all common TLS signature schemes to `SigningKey::choose_scheme()
 - **No `scheme` in sign protocol**: Provider infers signature scheme from key type. The proxy determines supported schemes from the certificate's public key.
 - **PEM loading**: Uses `rustls_pki_types` PemObject trait — only unencrypted PEMs.
 - **Signing**: Uses `rustls::crypto::ring::sign::any_supported_type()` which supports RSA, ECDSA (P-256, P-384), and Ed25519.
-- **`Response<R>` generic**: Avoids needing a method tag on responses; the client knows what type to expect based on the request it sent.
+- **`SuccessResponse` enum**: Success responses include a `method` tag, allowing unified deserialization. Error responses omit the `method` tag since no result is present.
 
 ## Current Status
 

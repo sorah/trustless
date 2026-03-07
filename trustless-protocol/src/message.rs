@@ -1,62 +1,29 @@
 use serde_with::serde_as;
 
-/// Trait for request parameter types, enabling typetag-based dispatch.
-#[typetag::serde(tag = "method")]
-pub trait RequestParams: std::fmt::Debug + Send + Sync + 'static {
-    fn as_any(&self) -> &dyn std::any::Any;
+/// A protocol request message.
+///
+/// Internally tagged by `method`, with `id` repeated in each variant.
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+#[serde(tag = "method")]
+pub enum Request {
+    #[serde(rename = "initialize")]
+    Initialize { id: u64, params: InitializeParams },
+    #[serde(rename = "sign")]
+    Sign { id: u64, params: SignParams },
 }
 
-/// A protocol request message containing a monotonic `id` and method-specific parameters.
-#[derive(Debug)]
-pub struct Request<P> {
-    /// Monotonically increasing request identifier. Responses must echo this value.
-    pub id: u64,
-    pub params: P,
-}
-
-impl<P: RequestParams + serde::Serialize> serde::Serialize for Request<P> {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeStruct;
-        let mut s = serializer.serialize_struct("Request", 2)?;
-        s.serialize_field("id", &self.id)?;
-        let dyn_params: &dyn RequestParams = &self.params;
-        s.serialize_field("params", dyn_params)?;
-        s.end()
-    }
-}
-
-impl<'de, P: serde::Deserialize<'de>> serde::Deserialize<'de> for Request<P> {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(serde::Deserialize)]
-        struct RequestHelper<P> {
-            id: u64,
-            params: P,
+impl Request {
+    pub fn id(&self) -> u64 {
+        match self {
+            Request::Initialize { id, .. } => *id,
+            Request::Sign { id, .. } => *id,
         }
-        let helper = RequestHelper::<P>::deserialize(deserializer)?;
-        Ok(Request {
-            id: helper.id,
-            params: helper.params,
-        })
     }
-}
-
-/// A received request with dynamically-dispatched parameters (for server-side use).
-#[derive(Debug, serde::Deserialize)]
-pub struct ReceivedRequest {
-    pub id: u64,
-    pub params: Box<dyn RequestParams>,
 }
 
 /// Parameters for the `initialize` method. Currently empty.
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct InitializeParams {}
-
-#[typetag::serde(name = "initialize")]
-impl RequestParams for InitializeParams {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
 
 /// Parameters for the `sign` method.
 #[serde_as]
@@ -71,33 +38,39 @@ pub struct SignParams {
     pub blob: Vec<u8>,
 }
 
-#[typetag::serde(name = "sign")]
-impl RequestParams for SignParams {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
-
-/// A protocol response message containing the echoed `id` and either a result or error.
+/// A successful protocol response, internally tagged by `method`.
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
-pub struct Response<R> {
-    /// The request `id` this response corresponds to.
-    pub id: u64,
-    #[serde(flatten)]
-    pub body: ResponseBody<R>,
+#[serde(tag = "method")]
+pub enum SuccessResponse {
+    #[serde(rename = "initialize")]
+    Initialize { id: u64, result: InitializeResult },
+    #[serde(rename = "sign")]
+    Sign { id: u64, result: SignResult },
 }
 
-/// Untagged enum: either a successful result or an error payload.
-///
-/// Uses serde's `untagged` representation — the presence of `"result"` vs `"error"` key
-/// determines which variant is deserialized.
+/// An error response with no method tag.
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+pub struct ErrorResponse {
+    pub id: u64,
+    pub error: ErrorPayload,
+}
+
+/// A protocol response message — either a tagged success or an error.
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 #[serde(untagged)]
-pub enum ResponseBody<R> {
-    /// Successful response containing the method-specific result.
-    Result { result: R },
-    /// Error response.
-    Error { error: ErrorPayload },
+pub enum Response {
+    Success(SuccessResponse),
+    Error(ErrorResponse),
+}
+
+impl Response {
+    pub fn id(&self) -> u64 {
+        match self {
+            Response::Success(SuccessResponse::Initialize { id, .. }) => *id,
+            Response::Success(SuccessResponse::Sign { id, .. }) => *id,
+            Response::Error(ErrorResponse { id, .. }) => *id,
+        }
+    }
 }
 
 /// An error payload with a numeric code and human-readable message.
@@ -145,45 +118,28 @@ pub struct SignResult {
 #[cfg(test)]
 mod tests {
     #[derive(serde::Deserialize, Debug)]
-    struct WireRequestParams<P> {
+    struct WireRequest {
+        id: u64,
         method: String,
-        #[serde(flatten)]
-        inner: P,
-    }
-
-    #[derive(serde::Deserialize, Debug)]
-    struct WireRequest<P> {
-        id: u64,
-        params: WireRequestParams<P>,
-    }
-
-    #[derive(serde::Deserialize, Debug)]
-    struct WireResultResponse<R> {
-        id: u64,
-        result: R,
-    }
-
-    #[derive(serde::Deserialize, Debug)]
-    struct WireErrorResponse {
-        id: u64,
-        error: super::ErrorPayload,
+        #[allow(dead_code)]
+        params: serde_json::Value,
     }
 
     #[test]
     fn serialize_initialize_request() {
-        let req = super::Request {
+        let req = super::Request::Initialize {
             id: 1,
             params: super::InitializeParams {},
         };
         let json = serde_json::to_string(&req).unwrap();
-        let wire: WireRequest<super::InitializeParams> = serde_json::from_str(&json).unwrap();
+        let wire: WireRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(wire.id, 1);
-        assert_eq!(wire.params.method, "initialize");
+        assert_eq!(wire.method, "initialize");
     }
 
     #[test]
     fn serialize_sign_request() {
-        let req = super::Request {
+        let req = super::Request::Sign {
             id: 42,
             params: super::SignParams {
                 certificate_id: "cert/v1".to_owned(),
@@ -192,63 +148,41 @@ mod tests {
             },
         };
         let json = serde_json::to_string(&req).unwrap();
-        let wire: WireRequest<super::SignParams> = serde_json::from_str(&json).unwrap();
+        let wire: WireRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(wire.id, 42);
-        assert_eq!(wire.params.method, "sign");
-        assert_eq!(wire.params.inner.certificate_id, "cert/v1");
-        assert_eq!(wire.params.inner.scheme, "ECDSA_NISTP256_SHA256");
-        // base64 of [0xde, 0xad, 0xbe, 0xef]
-        assert_eq!(wire.params.inner.blob, vec![0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(wire.method, "sign");
+        let params: super::SignParams = serde_json::from_value(wire.params).unwrap();
+        assert_eq!(params.certificate_id, "cert/v1");
+        assert_eq!(params.scheme, "ECDSA_NISTP256_SHA256");
+        assert_eq!(params.blob, vec![0xde, 0xad, 0xbe, 0xef]);
     }
 
     #[test]
-    fn deserialize_initialize_request_concrete() {
-        let json = r#"{"id":5,"params":{"method":"initialize"}}"#;
-        let req: super::Request<super::InitializeParams> = serde_json::from_str(json).unwrap();
-        assert_eq!(req.id, 5);
+    fn deserialize_initialize_request() {
+        let json = r#"{"id":5,"method":"initialize","params":{}}"#;
+        let req: super::Request = serde_json::from_str(json).unwrap();
+        assert_eq!(req.id(), 5);
+        assert!(matches!(req, super::Request::Initialize { .. }));
     }
 
     #[test]
-    fn deserialize_sign_request_concrete() {
-        let json = r#"{"id":7,"params":{"method":"sign","certificate_id":"c1","scheme":"ED25519","blob":"AQID"}}"#;
-        let req: super::Request<super::SignParams> = serde_json::from_str(json).unwrap();
-        assert_eq!(req.id, 7);
-        assert_eq!(req.params.certificate_id, "c1");
-        assert_eq!(req.params.scheme, "ED25519");
-        assert_eq!(req.params.blob, vec![1, 2, 3]);
+    fn deserialize_sign_request() {
+        let json = r#"{"id":7,"method":"sign","params":{"certificate_id":"c1","scheme":"ED25519","blob":"AQID"}}"#;
+        let req: super::Request = serde_json::from_str(json).unwrap();
+        assert_eq!(req.id(), 7);
+        match req {
+            super::Request::Sign { params, .. } => {
+                assert_eq!(params.certificate_id, "c1");
+                assert_eq!(params.scheme, "ED25519");
+                assert_eq!(params.blob, vec![1, 2, 3]);
+            }
+            _ => panic!("expected Sign"),
+        }
     }
 
     #[test]
-    fn deserialize_received_request_initialize() {
-        let json = r#"{"id":5,"params":{"method":"initialize"}}"#;
-        let req: super::ReceivedRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.id, 5);
-        assert!(
-            req.params
-                .as_any()
-                .downcast_ref::<super::InitializeParams>()
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn deserialize_received_request_sign() {
-        let json = r#"{"id":7,"params":{"method":"sign","certificate_id":"c1","scheme":"ED25519","blob":"AQID"}}"#;
-        let req: super::ReceivedRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.id, 7);
-        let params = req
-            .params
-            .as_any()
-            .downcast_ref::<super::SignParams>()
-            .unwrap();
-        assert_eq!(params.certificate_id, "c1");
-        assert_eq!(params.scheme, "ED25519");
-        assert_eq!(params.blob, vec![1, 2, 3]);
-    }
-
-    #[test]
-    fn request_round_trip_via_received() {
-        let req = super::Request {
+    fn request_round_trip() {
+        let req = super::Request::Sign {
             id: 10,
             params: super::SignParams {
                 certificate_id: "cert/v1".to_owned(),
@@ -257,99 +191,95 @@ mod tests {
             },
         };
         let json = serde_json::to_string(&req).unwrap();
-        let received: super::ReceivedRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(received.id, 10);
-        let params = received
-            .params
-            .as_any()
-            .downcast_ref::<super::SignParams>()
-            .unwrap();
-        assert_eq!(params.certificate_id, "cert/v1");
-        assert_eq!(params.blob, vec![0xde, 0xad]);
+        let decoded: super::Request = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.id(), 10);
+        match decoded {
+            super::Request::Sign { params, .. } => {
+                assert_eq!(params.certificate_id, "cert/v1");
+                assert_eq!(params.blob, vec![0xde, 0xad]);
+            }
+            _ => panic!("expected Sign"),
+        }
     }
 
     #[test]
     fn serialize_initialize_result_response() {
-        let resp = super::Response {
+        let resp = super::Response::Success(super::SuccessResponse::Initialize {
             id: 1,
-            body: super::ResponseBody::Result {
-                result: super::InitializeResult {
-                    default: "cert1".to_owned(),
-                    certificates: vec![super::CertificateInfo {
-                        id: "cert1".to_owned(),
-                        domains: vec!["*.example.com".to_owned()],
-                        pem: "PEM DATA".to_owned(),
-                        schemes: vec!["ECDSA_NISTP256_SHA256".to_owned()],
-                    }],
-                },
+            result: super::InitializeResult {
+                default: "cert1".to_owned(),
+                certificates: vec![super::CertificateInfo {
+                    id: "cert1".to_owned(),
+                    domains: vec!["*.example.com".to_owned()],
+                    pem: "PEM DATA".to_owned(),
+                    schemes: vec!["ECDSA_NISTP256_SHA256".to_owned()],
+                }],
             },
-        };
+        });
         let json = serde_json::to_string(&resp).unwrap();
-        let wire: WireResultResponse<super::InitializeResult> =
-            serde_json::from_str(&json).unwrap();
-        assert_eq!(wire.id, 1);
-        assert_eq!(wire.result.default, "cert1");
-        assert_eq!(wire.result.certificates[0].id, "cert1");
-        assert_eq!(wire.result.certificates[0].domains[0], "*.example.com");
+        assert!(json.contains("\"method\":\"initialize\""));
+        assert!(json.contains("\"result\""));
         assert!(!json.contains("\"error\""));
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["id"], 1);
+        assert_eq!(v["method"], "initialize");
+        assert_eq!(v["result"]["default"], "cert1");
     }
 
     #[test]
     fn serialize_sign_result_response() {
-        let resp = super::Response {
+        let resp = super::Response::Success(super::SuccessResponse::Sign {
             id: 2,
-            body: super::ResponseBody::Result {
-                result: super::SignResult {
-                    signature: vec![0xff, 0x00, 0xab],
-                },
+            result: super::SignResult {
+                signature: vec![0xff, 0x00, 0xab],
             },
-        };
+        });
         let json = serde_json::to_string(&resp).unwrap();
-        let wire: WireResultResponse<super::SignResult> = serde_json::from_str(&json).unwrap();
-        assert_eq!(wire.id, 2);
-        assert_eq!(wire.result.signature, vec![0xff, 0x00, 0xab]);
+        assert!(json.contains("\"method\":\"sign\""));
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["id"], 2);
+        assert_eq!(v["method"], "sign");
     }
 
     #[test]
     fn serialize_error_response() {
-        let resp: super::Response<super::InitializeResult> = super::Response {
+        let resp = super::Response::Error(super::ErrorResponse {
             id: 3,
-            body: super::ResponseBody::Error {
-                error: super::ErrorPayload {
-                    code: 1,
-                    message: "not found".to_owned(),
-                },
+            error: super::ErrorPayload {
+                code: 1,
+                message: "not found".to_owned(),
             },
-        };
+        });
         let json = serde_json::to_string(&resp).unwrap();
-        let wire: WireErrorResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(wire.id, 3);
-        assert_eq!(wire.error.code, 1);
-        assert_eq!(wire.error.message, "not found");
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["id"], 3);
+        assert_eq!(v["error"]["code"], 1);
+        assert_eq!(v["error"]["message"], "not found");
         assert!(!json.contains("\"result\""));
+        assert!(!json.contains("\"method\""));
     }
 
     #[test]
     fn deserialize_result_response() {
-        let json = r#"{"id":1,"result":{"default":"c1","certificates":[{"id":"c1","domains":["*.test"],"pem":"---"}]}}"#;
-        let resp: super::Response<super::InitializeResult> = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.id, 1);
-        match resp.body {
-            super::ResponseBody::Result { result } => {
+        let json = r#"{"id":1,"method":"initialize","result":{"default":"c1","certificates":[{"id":"c1","domains":["*.test"],"pem":"---"}]}}"#;
+        let resp: super::Response = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.id(), 1);
+        match resp {
+            super::Response::Success(super::SuccessResponse::Initialize { result, .. }) => {
                 assert_eq!(result.default, "c1");
                 assert_eq!(result.certificates.len(), 1);
             }
-            _ => panic!("expected Result"),
+            _ => panic!("expected Initialize Result"),
         }
     }
 
     #[test]
     fn deserialize_error_response() {
         let json = r#"{"id":2,"error":{"code":99,"message":"boom"}}"#;
-        let resp: super::Response<super::SignResult> = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.id, 2);
-        match resp.body {
-            super::ResponseBody::Error { error } => {
+        let resp: super::Response = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.id(), 2);
+        match resp {
+            super::Response::Error(super::ErrorResponse { error, .. }) => {
                 assert_eq!(error.code, 99);
                 assert_eq!(error.message, "boom");
             }

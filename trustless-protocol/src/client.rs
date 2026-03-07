@@ -35,7 +35,27 @@ where
     pub async fn initialize(
         &self,
     ) -> Result<crate::message::InitializeResult, crate::error::Error> {
-        self.call(crate::message::InitializeParams {}).await
+        let response = self
+            .send_and_recv(|id| crate::message::Request::Initialize {
+                id,
+                params: crate::message::InitializeParams {},
+            })
+            .await?;
+        match response {
+            crate::message::Response::Success(crate::message::SuccessResponse::Initialize {
+                result,
+                ..
+            }) => Ok(result),
+            crate::message::Response::Success(_) => {
+                Err(crate::error::Error::UnexpectedResponseMethod)
+            }
+            crate::message::Response::Error(crate::message::ErrorResponse { error, .. }) => {
+                Err(crate::error::Error::Provider {
+                    code: error.code,
+                    message: error.message,
+                })
+            }
+        }
     }
 
     /// Send a `sign` request and return the raw signature bytes.
@@ -45,44 +65,57 @@ where
         scheme: &str,
         blob: &[u8],
     ) -> Result<Vec<u8>, crate::error::Error> {
-        let result: crate::message::SignResult = self
-            .call(crate::message::SignParams {
-                certificate_id: certificate_id.to_owned(),
-                scheme: scheme.to_owned(),
-                blob: blob.to_vec(),
+        let certificate_id = certificate_id.to_owned();
+        let scheme = scheme.to_owned();
+        let blob = blob.to_vec();
+        let response = self
+            .send_and_recv(|id| crate::message::Request::Sign {
+                id,
+                params: crate::message::SignParams {
+                    certificate_id,
+                    scheme,
+                    blob,
+                },
             })
             .await?;
-        Ok(result.signature)
+        match response {
+            crate::message::Response::Success(crate::message::SuccessResponse::Sign {
+                result,
+                ..
+            }) => Ok(result.signature),
+            crate::message::Response::Success(_) => {
+                Err(crate::error::Error::UnexpectedResponseMethod)
+            }
+            crate::message::Response::Error(crate::message::ErrorResponse { error, .. }) => {
+                Err(crate::error::Error::Provider {
+                    code: error.code,
+                    message: error.message,
+                })
+            }
+        }
     }
 
-    async fn call<P, T>(&self, params: P) -> Result<T, crate::error::Error>
-    where
-        P: crate::message::RequestParams + serde::Serialize,
-        T: serde::de::DeserializeOwned,
-    {
+    async fn send_and_recv(
+        &self,
+        build_request: impl FnOnce(u64) -> crate::message::Request,
+    ) -> Result<crate::message::Response, crate::error::Error> {
         let mut inner = self.inner.lock().await;
         let id = inner.next_id;
         inner.next_id += 1;
 
-        let request = crate::message::Request { id, params };
+        let request = build_request(id);
         crate::codec::send_message(&mut inner.writer, &request).await?;
 
-        let response: crate::message::Response<T> =
+        let response: crate::message::Response =
             crate::codec::recv_message(&mut inner.reader).await?;
 
-        if response.id != id {
+        if response.id() != id {
             return Err(crate::error::Error::UnexpectedResponseId {
                 expected: id,
-                got: response.id,
+                got: response.id(),
             });
         }
 
-        match response.body {
-            crate::message::ResponseBody::Result { result } => Ok(result),
-            crate::message::ResponseBody::Error { error } => Err(crate::error::Error::Provider {
-                code: error.code,
-                message: error.message,
-            }),
-        }
+        Ok(response)
     }
 }

@@ -17,6 +17,10 @@ pub enum Error {
     #[error("unexpected response id: expected {expected}, got {got}")]
     UnexpectedResponseId { expected: u64, got: u64 },
 
+    /// The response method did not match what was expected.
+    #[error("unexpected response method")]
+    UnexpectedResponseMethod,
+
     /// The provider process exited (stdin/stdout reached EOF).
     #[error("provider process exited unexpectedly")]
     ProcessExited,

@@ -4,15 +4,11 @@ struct LambdaHandler {
 }
 
 impl LambdaHandler {
-    async fn invoke_lambda<P, R>(
+    async fn invoke_lambda(
         &self,
-        params: P,
-    ) -> Result<R, trustless_protocol::message::ErrorPayload>
-    where
-        P: trustless_protocol::message::RequestParams + serde::Serialize,
-        R: serde::de::DeserializeOwned,
+        request: trustless_protocol::message::Request,
+    ) -> Result<trustless_protocol::message::Response, trustless_protocol::message::ErrorPayload>
     {
-        let request = trustless_protocol::message::Request { id: 0, params };
         let payload = serde_json::to_vec(&request).map_err(|e| {
             trustless_protocol::message::ErrorPayload {
                 code: -1,
@@ -51,7 +47,7 @@ impl LambdaHandler {
                     message: "Lambda returned no payload".to_owned(),
                 })?;
 
-        let response: trustless_protocol::message::Response<R> =
+        let response: trustless_protocol::message::Response =
             serde_json::from_slice(response_payload.as_ref()).map_err(|e| {
                 trustless_protocol::message::ErrorPayload {
                     code: -1,
@@ -59,10 +55,7 @@ impl LambdaHandler {
                 }
             })?;
 
-        match response.body {
-            trustless_protocol::message::ResponseBody::Result { result } => Ok(result),
-            trustless_protocol::message::ResponseBody::Error { error } => Err(error),
-        }
+        Ok(response)
     }
 }
 
@@ -73,10 +66,25 @@ impl trustless_protocol::handler::Handler for LambdaHandler {
         trustless_protocol::message::InitializeResult,
         trustless_protocol::message::ErrorPayload,
     > {
-        self.invoke_lambda::<trustless_protocol::message::InitializeParams, trustless_protocol::message::InitializeResult>(
-            trustless_protocol::message::InitializeParams {},
-        )
-        .await
+        let request = trustless_protocol::message::Request::Initialize {
+            id: 0,
+            params: trustless_protocol::message::InitializeParams {},
+        };
+        let response = self.invoke_lambda(request).await?;
+        match response {
+            trustless_protocol::message::Response::Success(
+                trustless_protocol::message::SuccessResponse::Initialize { result, .. },
+            ) => Ok(result),
+            trustless_protocol::message::Response::Success(_) => {
+                Err(trustless_protocol::message::ErrorPayload {
+                    code: -1,
+                    message: "unexpected response method".to_owned(),
+                })
+            }
+            trustless_protocol::message::Response::Error(
+                trustless_protocol::message::ErrorResponse { error, .. },
+            ) => Err(error),
+        }
     }
 
     async fn sign(
@@ -84,10 +92,22 @@ impl trustless_protocol::handler::Handler for LambdaHandler {
         params: trustless_protocol::message::SignParams,
     ) -> Result<trustless_protocol::message::SignResult, trustless_protocol::message::ErrorPayload>
     {
-        self.invoke_lambda::<trustless_protocol::message::SignParams, trustless_protocol::message::SignResult>(
-            params,
-        )
-        .await
+        let request = trustless_protocol::message::Request::Sign { id: 0, params };
+        let response = self.invoke_lambda(request).await?;
+        match response {
+            trustless_protocol::message::Response::Success(
+                trustless_protocol::message::SuccessResponse::Sign { result, .. },
+            ) => Ok(result),
+            trustless_protocol::message::Response::Success(_) => {
+                Err(trustless_protocol::message::ErrorPayload {
+                    code: -1,
+                    message: "unexpected response method".to_owned(),
+                })
+            }
+            trustless_protocol::message::Response::Error(
+                trustless_protocol::message::ErrorResponse { error, .. },
+            ) => Err(error),
+        }
     }
 }
 

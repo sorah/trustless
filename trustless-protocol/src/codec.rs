@@ -58,48 +58,46 @@ mod tests {
         let mut writer = super::framed_write(client_write);
         let mut reader = super::framed_read(read_half);
 
-        let request = crate::message::Request {
+        let request = crate::message::Request::Initialize {
             id: 1,
             params: crate::message::InitializeParams {},
         };
         super::send_message(&mut writer, &request).await.unwrap();
 
-        let received: crate::message::ReceivedRequest =
-            super::recv_message(&mut reader).await.unwrap();
-        assert_eq!(received.id, 1);
-        assert!(
-            received
-                .params
-                .as_any()
-                .downcast_ref::<crate::message::InitializeParams>()
-                .is_some()
-        );
+        let received: crate::message::Request = super::recv_message(&mut reader).await.unwrap();
+        assert_eq!(received.id(), 1);
+        assert!(matches!(
+            received,
+            crate::message::Request::Initialize { .. }
+        ));
 
         // Send a response back
         let mut server_writer = super::framed_write(write_half);
         let mut client_reader = super::framed_read(client_read);
 
-        let response = crate::message::Response {
-            id: 1,
-            body: crate::message::ResponseBody::<crate::message::InitializeResult>::Result {
+        let response =
+            crate::message::Response::Success(crate::message::SuccessResponse::Initialize {
+                id: 1,
                 result: crate::message::InitializeResult {
                     default: "cert1".to_owned(),
                     certificates: vec![],
                 },
-            },
-        };
+            });
         super::send_message(&mut server_writer, &response)
             .await
             .unwrap();
 
-        let received: crate::message::Response<crate::message::InitializeResult> =
+        let received: crate::message::Response =
             super::recv_message(&mut client_reader).await.unwrap();
-        assert_eq!(received.id, 1);
-        match received.body {
-            crate::message::ResponseBody::Result { result } => {
+        assert_eq!(received.id(), 1);
+        match received {
+            crate::message::Response::Success(crate::message::SuccessResponse::Initialize {
+                result,
+                ..
+            }) => {
                 assert_eq!(result.default, "cert1");
             }
-            _ => panic!("expected Result"),
+            _ => panic!("expected Initialize Result"),
         }
     }
 
@@ -108,8 +106,7 @@ mod tests {
         let (client, server) = tokio::io::duplex(4096);
         drop(client);
         let mut reader = super::framed_read(server);
-        let result: Result<crate::message::ReceivedRequest, _> =
-            super::recv_message(&mut reader).await;
+        let result: Result<crate::message::Request, _> = super::recv_message(&mut reader).await;
         assert!(matches!(result, Err(crate::error::Error::ProcessExited)));
     }
 
@@ -124,7 +121,7 @@ mod tests {
         let mut reader = super::framed_read(server_read);
 
         for i in 1..=5 {
-            let req = crate::message::Request {
+            let req = crate::message::Request::Sign {
                 id: i,
                 params: crate::message::SignParams {
                     certificate_id: format!("cert{i}"),
@@ -136,16 +133,15 @@ mod tests {
         }
 
         for i in 1..=5 {
-            let received: crate::message::ReceivedRequest =
-                super::recv_message(&mut reader).await.unwrap();
-            assert_eq!(received.id, i);
-            let params = received
-                .params
-                .as_any()
-                .downcast_ref::<crate::message::SignParams>()
-                .unwrap();
-            assert_eq!(params.certificate_id, format!("cert{i}"));
-            assert_eq!(params.blob, vec![i as u8; 16]);
+            let received: crate::message::Request = super::recv_message(&mut reader).await.unwrap();
+            assert_eq!(received.id(), i);
+            match &received {
+                crate::message::Request::Sign { params, .. } => {
+                    assert_eq!(params.certificate_id, format!("cert{i}"));
+                    assert_eq!(params.blob, vec![i as u8; 16]);
+                }
+                _ => panic!("expected Sign"),
+            }
         }
     }
 }

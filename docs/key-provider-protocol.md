@@ -4,19 +4,29 @@ Trustless connects to a specified key provider by running a command line specifi
 
 ## Payload
 
-Each request carries an `id` and a `params` object. The `method` tag is embedded inside `params` to identify the request type.
+Each request carries an `id`, a `method` string, and a `params` object.
 
 ```
 {
     "id": 123,
-    "params": {
-        "method": "...",
-        ...
-    }
+    "method": "...",
+    "params": { ... }
+}
+```
+
+Success responses echo the `id` and `method`, with the result in a `result` object:
+
+```
+{
+    "id": 123,
+    "method": "...",
+    "result": { ... }
 }
 ```
 
 ### Returning error
+
+Error responses carry the `id` and an `error` object (no `method` tag):
 
 ```
 {
@@ -39,9 +49,8 @@ __Request:__
 ```json
 {
     "id": 1,
-    "params": {
-        "method": "initialize"
-    }
+    "method": "initialize",
+    "params": {}
 }
 ```
 
@@ -49,6 +58,8 @@ __Response:__
 
 ```json
 {
+    "id": 1,
+    "method": "initialize",
     "result": {
         "default": "cert1",
         "certificates": [
@@ -77,8 +88,8 @@ __Request:__
 ```json
 {
     "id": 2,
+    "method": "sign",
     "params": {
-        "method": "sign",
         "certificate_id": "cert1",
         "scheme": "RSA_PSS_SHA256",
         "blob": "base64 string"
@@ -90,6 +101,8 @@ __Response:__
 
 ```json
 {
+    "id": 2,
+    "method": "sign",
     "result": {
         "signature": "base64 string"
     }
