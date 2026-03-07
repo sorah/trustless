@@ -2,6 +2,7 @@
 git_tag_name = "{{ package }}/v{{ version }}"
 git_release_draft = true
 release_always = false
+publish_no_verify = true
 
 [[package]]
 name = "trustless-provider-stub"

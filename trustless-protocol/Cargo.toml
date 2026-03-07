@@ -3,6 +3,9 @@ name = "trustless-protocol"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
+description = "Protocol utilities for trustless"
+homepage = "https://github.com/sorah/trustless"
+repository = "https://github.com/sorah/trustless"
 
 [features]
 provider-helpers = ["dep:rustls-pki-types", "dep:x509-parser", "rustls/aws_lc_rs"]
