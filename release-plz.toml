@@ -1,6 +1,7 @@
 [workspace]
 git_tag_name = "{{ package }}/v{{ version }}"
 git_release_draft = true
+release_always = false
 
 [[package]]
 name = "trustless-provider-stub"
