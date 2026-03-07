@@ -5,6 +5,7 @@ pub struct ServerState {
     registry: crate::provider::ProviderRegistry,
     route_table: crate::route::RouteTable,
     port: u16,
+    config_dir: std::path::PathBuf,
 }
 
 impl ServerState {
@@ -14,6 +15,7 @@ impl ServerState {
         registry: crate::provider::ProviderRegistry,
         route_table: crate::route::RouteTable,
         port: u16,
+        config_dir: std::path::PathBuf,
     ) -> Self {
         Self {
             shutdown_tx: std::sync::Arc::new(std::sync::Mutex::new(Some(shutdown_tx))),
@@ -21,6 +23,7 @@ impl ServerState {
             registry,
             route_table,
             port,
+            config_dir,
         }
     }
 }
@@ -52,17 +55,60 @@ async fn stop(
 async fn reload(
     axum::extract::State(state): axum::extract::State<ServerState>,
 ) -> axum::Json<super::ReloadResponse> {
-    let results = state.orchestrator.restart_all().await;
+    let config = match crate::config::Config::load_from(state.config_dir.clone()) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("reload: failed to load config: {e}");
+            return axum::Json(super::ReloadResponse {
+                ok: false,
+                results: std::collections::HashMap::from([(
+                    "_config".to_owned(),
+                    super::ReloadProviderResult {
+                        ok: false,
+                        error: Some(format!("failed to load config: {e}")),
+                        action: None,
+                    },
+                )]),
+            });
+        }
+    };
+
+    let current_profiles = state.orchestrator.provider_profiles();
+    let diff = match config.diff_profiles(&current_profiles) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::error!("reload: failed to diff profiles: {e}");
+            return axum::Json(super::ReloadResponse {
+                ok: false,
+                results: std::collections::HashMap::from([(
+                    "_config".to_owned(),
+                    super::ReloadProviderResult {
+                        ok: false,
+                        error: Some(format!("failed to diff profiles: {e}")),
+                        action: None,
+                    },
+                )]),
+            });
+        }
+    };
+
     let mut per_provider = std::collections::HashMap::new();
     let mut all_ok = true;
-    for (name, result) in results {
-        match result {
+
+    // Added profiles
+    for (name, profile) in diff.added {
+        match state
+            .orchestrator
+            .add_provider_resilient(&name, profile)
+            .await
+        {
             Ok(()) => {
                 per_provider.insert(
                     name,
                     super::ReloadProviderResult {
                         ok: true,
                         error: None,
+                        action: Some("added".to_owned()),
                     },
                 );
             }
@@ -73,11 +119,96 @@ async fn reload(
                     super::ReloadProviderResult {
                         ok: false,
                         error: Some(e.to_string()),
+                        action: Some("added".to_owned()),
                     },
                 );
             }
         }
     }
+
+    // Removed profiles
+    for name in diff.removed {
+        match state.orchestrator.remove_provider(&name).await {
+            Ok(()) => {
+                per_provider.insert(
+                    name,
+                    super::ReloadProviderResult {
+                        ok: true,
+                        error: None,
+                        action: Some("removed".to_owned()),
+                    },
+                );
+            }
+            Err(e) => {
+                all_ok = false;
+                per_provider.insert(
+                    name,
+                    super::ReloadProviderResult {
+                        ok: false,
+                        error: Some(e.to_string()),
+                        action: Some("removed".to_owned()),
+                    },
+                );
+            }
+        }
+    }
+
+    // Changed profiles: remove and re-add
+    for (name, new_profile) in diff.changed {
+        if let Err(e) = state.orchestrator.remove_provider(&name).await {
+            all_ok = false;
+            per_provider.insert(
+                name,
+                super::ReloadProviderResult {
+                    ok: false,
+                    error: Some(format!("failed to remove for restart: {e}")),
+                    action: Some("restarted".to_owned()),
+                },
+            );
+            continue;
+        }
+
+        match state
+            .orchestrator
+            .add_provider_resilient(&name, new_profile)
+            .await
+        {
+            Ok(()) => {
+                per_provider.insert(
+                    name,
+                    super::ReloadProviderResult {
+                        ok: true,
+                        error: None,
+                        action: Some("restarted".to_owned()),
+                    },
+                );
+            }
+            Err(e) => {
+                all_ok = false;
+                per_provider.insert(
+                    name,
+                    super::ReloadProviderResult {
+                        ok: false,
+                        error: Some(e.to_string()),
+                        action: Some("restarted".to_owned()),
+                    },
+                );
+            }
+        }
+    }
+
+    // Unchanged profiles
+    for name in diff.unchanged {
+        per_provider.insert(
+            name,
+            super::ReloadProviderResult {
+                ok: true,
+                error: None,
+                action: Some("unchanged".to_owned()),
+            },
+        );
+    }
+
     tracing::info!(ok = all_ok, "reload completed via control API");
     axum::Json(super::ReloadResponse {
         ok: all_ok,
@@ -165,7 +296,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let route_table = crate::route::RouteTable::new(dir.path().to_path_buf());
         (
-            ServerState::new(tx, orchestrator, registry, route_table, 1443),
+            ServerState::new(
+                tx,
+                orchestrator,
+                registry,
+                route_table,
+                1443,
+                dir.path().to_path_buf(),
+            ),
             rx,
             dir,
         )

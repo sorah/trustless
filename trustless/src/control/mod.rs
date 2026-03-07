@@ -15,6 +15,8 @@ pub struct ReloadProviderResult {
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]

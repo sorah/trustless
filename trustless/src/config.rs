@@ -28,7 +28,7 @@ pub fn default_sign_timeout_seconds() -> u64 {
     15
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct Profile {
     pub command: Vec<String>,
     #[serde(default = "default_sign_timeout_seconds")]
@@ -92,12 +92,20 @@ pub fn log_dir_mkpath() -> std::io::Result<std::path::PathBuf> {
     Ok(dir)
 }
 
+#[derive(Debug)]
+pub struct ProfileDiff {
+    pub added: Vec<(String, Profile)>,
+    pub removed: Vec<String>,
+    pub changed: Vec<(String, Profile)>,
+    pub unchanged: Vec<String>,
+}
+
 impl Config {
     pub fn load() -> Result<Self, crate::Error> {
         Self::load_from(config_dir())
     }
 
-    fn load_from(base: std::path::PathBuf) -> Result<Self, crate::Error> {
+    pub fn load_from(base: std::path::PathBuf) -> Result<Self, crate::Error> {
         let path = base.join("config.json");
         let mut config = match std::fs::read(&path) {
             Ok(data) => serde_json::from_slice::<Self>(&data)?,
@@ -106,6 +114,10 @@ impl Config {
         };
         config.config_dir = base;
         Ok(config)
+    }
+
+    pub fn config_dir(&self) -> &std::path::Path {
+        &self.config_dir
     }
 
     pub fn list_profiles(&self) -> Result<Vec<String>, crate::Error> {
@@ -136,6 +148,47 @@ impl Config {
             .join(format!("{name}.json"));
         let data = std::fs::read(&path)?;
         Ok(serde_json::from_slice(&data)?)
+    }
+
+    /// Compute the diff between the currently configured profiles on disk and
+    /// a set of running provider profiles (keyed by name).
+    pub fn diff_profiles(
+        &self,
+        current: &std::collections::HashMap<String, Profile>,
+    ) -> Result<ProfileDiff, crate::Error> {
+        let configured_names: std::collections::HashSet<String> =
+            self.list_profiles()?.into_iter().collect();
+        let current_names: std::collections::HashSet<String> = current.keys().cloned().collect();
+
+        let mut added = Vec::new();
+        let mut removed = Vec::new();
+        let mut changed = Vec::new();
+        let mut unchanged = Vec::new();
+
+        for name in configured_names.difference(&current_names) {
+            let profile = self.load_profile(name)?;
+            added.push((name.clone(), profile));
+        }
+
+        for name in current_names.difference(&configured_names) {
+            removed.push(name.clone());
+        }
+
+        for name in configured_names.intersection(&current_names) {
+            let new_profile = self.load_profile(name)?;
+            if current.get(name) == Some(&new_profile) {
+                unchanged.push(name.clone());
+            } else {
+                changed.push((name.clone(), new_profile));
+            }
+        }
+
+        Ok(ProfileDiff {
+            added,
+            removed,
+            changed,
+            unchanged,
+        })
     }
 
     pub fn save_profile(&self, name: &str, profile: &Profile) -> Result<(), crate::Error> {
@@ -230,5 +283,102 @@ mod tests {
         std::fs::write(dir.path().join("config.json"), r#"{"tls12": true}"#).unwrap();
         let config = Config::load_from(dir.path().to_path_buf()).unwrap();
         assert!(config.tls12);
+    }
+
+    fn make_profile(cmd: &str) -> Profile {
+        Profile {
+            command: vec![cmd.into()],
+            sign_timeout_seconds: default_sign_timeout_seconds(),
+        }
+    }
+
+    #[test]
+    fn test_diff_profiles_added() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config::load_from(dir.path().to_path_buf()).unwrap();
+        config.save_profile("new", &make_profile("cmd1")).unwrap();
+
+        let current = std::collections::HashMap::new();
+        let diff = config.diff_profiles(&current).unwrap();
+
+        assert_eq!(diff.added.len(), 1);
+        assert_eq!(diff.added[0].0, "new");
+        assert!(diff.removed.is_empty());
+        assert!(diff.changed.is_empty());
+        assert!(diff.unchanged.is_empty());
+    }
+
+    #[test]
+    fn test_diff_profiles_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config::load_from(dir.path().to_path_buf()).unwrap();
+
+        let current = std::collections::HashMap::from([("old".to_owned(), make_profile("cmd1"))]);
+        let diff = config.diff_profiles(&current).unwrap();
+
+        assert!(diff.added.is_empty());
+        assert_eq!(diff.removed, vec!["old"]);
+        assert!(diff.changed.is_empty());
+        assert!(diff.unchanged.is_empty());
+    }
+
+    #[test]
+    fn test_diff_profiles_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config::load_from(dir.path().to_path_buf()).unwrap();
+        config.save_profile("p", &make_profile("new_cmd")).unwrap();
+
+        let current = std::collections::HashMap::from([("p".to_owned(), make_profile("old_cmd"))]);
+        let diff = config.diff_profiles(&current).unwrap();
+
+        assert!(diff.added.is_empty());
+        assert!(diff.removed.is_empty());
+        assert_eq!(diff.changed.len(), 1);
+        assert_eq!(diff.changed[0].0, "p");
+        assert_eq!(diff.changed[0].1.command, vec!["new_cmd".to_owned()]);
+        assert!(diff.unchanged.is_empty());
+    }
+
+    #[test]
+    fn test_diff_profiles_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config::load_from(dir.path().to_path_buf()).unwrap();
+        let profile = make_profile("cmd1");
+        config.save_profile("p", &profile).unwrap();
+
+        let current = std::collections::HashMap::from([("p".to_owned(), profile)]);
+        let diff = config.diff_profiles(&current).unwrap();
+
+        assert!(diff.added.is_empty());
+        assert!(diff.removed.is_empty());
+        assert!(diff.changed.is_empty());
+        assert_eq!(diff.unchanged, vec!["p"]);
+    }
+
+    #[test]
+    fn test_diff_profiles_mixed() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config::load_from(dir.path().to_path_buf()).unwrap();
+        config
+            .save_profile("added", &make_profile("cmd_a"))
+            .unwrap();
+        config.save_profile("same", &make_profile("cmd_s")).unwrap();
+        config
+            .save_profile("changed", &make_profile("cmd_new"))
+            .unwrap();
+
+        let current = std::collections::HashMap::from([
+            ("same".to_owned(), make_profile("cmd_s")),
+            ("changed".to_owned(), make_profile("cmd_old")),
+            ("removed".to_owned(), make_profile("cmd_r")),
+        ]);
+        let diff = config.diff_profiles(&current).unwrap();
+
+        assert_eq!(diff.added.len(), 1);
+        assert_eq!(diff.added[0].0, "added");
+        assert_eq!(diff.removed, vec!["removed"]);
+        assert_eq!(diff.changed.len(), 1);
+        assert_eq!(diff.changed[0].0, "changed");
+        assert_eq!(diff.unchanged, vec!["same"]);
     }
 }

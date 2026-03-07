@@ -59,9 +59,9 @@ impl ProviderOrchestrator {
             Ok(result) => {
                 let supervisor = Supervisor::new(
                     name.to_owned(),
-                    profile,
+                    profile.clone(),
                     self.inner.registry.clone(),
-                    cancel,
+                    cancel.clone(),
                     command_rx,
                     result,
                 );
@@ -83,16 +83,16 @@ impl ProviderOrchestrator {
                 );
                 tokio::spawn(super::supervisor::run_recovering(
                     name.to_owned(),
-                    profile,
+                    profile.clone(),
                     self.inner.registry.clone(),
-                    cancel,
+                    cancel.clone(),
                     command_rx,
                 ))
             }
             Err(e) => return Err(e),
         };
 
-        self.register_supervisor(name, command_tx, task);
+        self.register_supervisor(name, command_tx, task, cancel, profile);
         Ok(())
     }
 
@@ -109,9 +109,19 @@ impl ProviderOrchestrator {
         name: &str,
         command_tx: tokio::sync::mpsc::Sender<SupervisorCommand>,
         task: tokio::task::JoinHandle<()>,
+        cancel: tokio_util::sync::CancellationToken,
+        profile: crate::config::Profile,
     ) {
         let mut supervisors = self.inner.supervisors.lock().unwrap();
-        supervisors.insert(name.to_owned(), SupervisorHandle { command_tx, task });
+        supervisors.insert(
+            name.to_owned(),
+            SupervisorHandle {
+                command_tx,
+                task,
+                cancel,
+                profile,
+            },
+        );
     }
 
     /// Kill the current provider process and restart it, bypassing backoff.
@@ -151,6 +161,28 @@ impl ProviderOrchestrator {
         results
     }
 
+    pub fn provider_profiles(&self) -> std::collections::HashMap<String, crate::config::Profile> {
+        let supervisors = self.inner.supervisors.lock().unwrap();
+        supervisors
+            .iter()
+            .map(|(name, h)| (name.clone(), h.profile.clone()))
+            .collect()
+    }
+
+    /// Remove a provider: cancel its supervisor, await task completion, and remove from registry.
+    pub async fn remove_provider(&self, name: &str) -> Result<(), crate::Error> {
+        let handle = {
+            let mut supervisors = self.inner.supervisors.lock().unwrap();
+            supervisors
+                .remove(name)
+                .ok_or_else(|| crate::Error::ProviderNotFound(name.to_owned()))?
+        };
+        handle.cancel.cancel();
+        let _ = handle.task.await;
+        self.inner.registry.remove_provider(name);
+        Ok(())
+    }
+
     /// Shutdown all providers. Sends SIGTERM, waits up to 20s, then SIGKILL.
     pub async fn shutdown(&self) {
         tracing::info!("shutting down all providers");
@@ -171,6 +203,8 @@ impl ProviderOrchestrator {
 struct SupervisorHandle {
     command_tx: tokio::sync::mpsc::Sender<SupervisorCommand>,
     task: tokio::task::JoinHandle<()>,
+    cancel: tokio_util::sync::CancellationToken,
+    profile: crate::config::Profile,
 }
 
 pub(super) enum SupervisorCommand {

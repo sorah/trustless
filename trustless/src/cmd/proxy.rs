@@ -126,6 +126,7 @@ async fn run_start_async(args: &ProxyStartArgs) -> anyhow::Result<()> {
         registry.clone(),
         route_table,
         local_addr.port(),
+        config.config_dir().to_path_buf(),
     );
     let app = crate::control::server::dispatch_router(server_state, proxy_app);
 
@@ -444,16 +445,17 @@ async fn run_reload(_args: &ProxyReloadArgs) -> anyhow::Result<()> {
     let result = client.reload().await?;
 
     for (name, status) in &result.results {
+        let action = status.action.as_deref().unwrap_or("unknown");
         if status.ok {
-            eprintln!("  {name}: ok");
+            eprintln!("  {name}: {action}");
         } else {
             let err = status.error.as_deref().unwrap_or("unknown error");
-            eprintln!("  {name}: error: {err}");
+            eprintln!("  {name}: {action}: error: {err}");
         }
     }
 
     if result.ok {
-        eprintln!("trustless: all providers reloaded");
+        eprintln!("trustless: reload completed");
     } else {
         anyhow::bail!("some providers failed to reload");
     }

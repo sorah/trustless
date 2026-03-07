@@ -235,6 +235,11 @@ impl ProviderRegistry {
         inner.providers.keys().cloned().collect()
     }
 
+    pub fn remove_provider(&self, name: &str) {
+        let mut inner = self.inner.write().unwrap();
+        inner.providers.remove(name);
+    }
+
     pub fn resolve_by_sni(
         &self,
         sni: Option<&str>,

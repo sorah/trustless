@@ -44,13 +44,14 @@ fn start_test_server(
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let registry = trustless::provider::ProviderRegistry::new();
     let orchestrator = trustless::provider::ProviderOrchestrator::new(registry.clone());
-    let route_table = trustless::route::RouteTable::new(state_dir);
+    let route_table = trustless::route::RouteTable::new(state_dir.clone());
     let server_state = trustless::control::server::ServerState::new(
         shutdown_tx,
         orchestrator,
         registry,
         route_table,
         port,
+        state_dir,
     );
     let stub_proxy = axum::Router::new()
         .fallback(|| async { (axum::http::StatusCode::BAD_GATEWAY, "no backend") });
