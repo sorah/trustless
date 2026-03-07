@@ -81,6 +81,12 @@ async fn proxy_handler(
         .get(http::header::HOST)
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string())
+        .or_else(|| {
+            req.uri().host().map(|h| match req.uri().port_u16() {
+                Some(port) => format!("{h}:{port}"),
+                None => h.to_string(),
+            })
+        })
         .ok_or(ProxyError::NoHostHeader)?;
 
     let host_without_port = crate::route::strip_port(&host);
