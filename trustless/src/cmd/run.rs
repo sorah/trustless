@@ -20,6 +20,9 @@ pub struct RunArgs {
 }
 
 pub fn run(args: &RunArgs) -> anyhow::Result<()> {
+    if super::exec::should_skip() {
+        return super::exec::skip_exec(&args.command);
+    }
     let hostname_spec = infer_project_name()?;
     match &hostname_spec {
         super::exec::HostnameSpec::Label(s) => {

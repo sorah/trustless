@@ -66,7 +66,29 @@ enum ExecIpcMessage {
 
 #[cfg(unix)]
 pub fn run(args: &ExecArgs) -> anyhow::Result<()> {
+    if should_skip() {
+        return skip_exec(&args.command);
+    }
     run_exec(ExecParams::from(args.clone()))
+}
+
+pub(crate) fn should_skip() -> bool {
+    matches!(
+        std::env::var("TRUSTLESS").ok().as_deref(),
+        Some("0") | Some("skip")
+    )
+}
+
+pub(crate) fn skip_exec(command: &[std::ffi::OsString]) -> anyhow::Result<()> {
+    use std::os::unix::process::CommandExt;
+
+    let arg0 = command
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("command cannot be empty"))?;
+
+    eprintln!("trustless: skipping (TRUSTLESS=skip)");
+    let err = std::process::Command::new(arg0).args(&command[1..]).exec();
+    anyhow::bail!("couldn't exec the command line: {}", err);
 }
 
 #[cfg(unix)]
@@ -368,6 +390,33 @@ mod executor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_should_skip_zero() {
+        unsafe { std::env::set_var("TRUSTLESS", "0") };
+        assert!(should_skip());
+        unsafe { std::env::remove_var("TRUSTLESS") };
+    }
+
+    #[test]
+    fn test_should_skip_skip() {
+        unsafe { std::env::set_var("TRUSTLESS", "skip") };
+        assert!(should_skip());
+        unsafe { std::env::remove_var("TRUSTLESS") };
+    }
+
+    #[test]
+    fn test_should_skip_unset() {
+        unsafe { std::env::remove_var("TRUSTLESS") };
+        assert!(!should_skip());
+    }
+
+    #[test]
+    fn test_should_skip_other_value() {
+        unsafe { std::env::set_var("TRUSTLESS", "1") };
+        assert!(!should_skip());
+        unsafe { std::env::remove_var("TRUSTLESS") };
+    }
 
     #[test]
     fn test_ipc_message_ready_roundtrip() {
