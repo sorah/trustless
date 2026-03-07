@@ -9,38 +9,19 @@
 - **005: Provider Registry & Orchestration** — `trustless::provider` ([spec](005-provider-registry.md))
 - **006: Proxy Lifecycle & Control API** — `trustless::control`, `trustless proxy start/stop` ([spec](006-proxy-lifecycle.md))
 - **TLS server** — HTTPS listener, HTTP/2, TLS 1.2/1.3 configuration (`f701a51`)
-
-### Proxy control API
-
-- Self-signed ephemeral cert for CLI-to-proxy HTTPS API (as described in `docs/internal.md`)
-- `trustless proxy stop` — stop proxy process
-- Proxy reload (restart provider, re-initialize certs)
-- `trustless status` — show proxy status, active mappings, provider error status, provider certificate domains.
-
-### `trustless exec`
-
-- `trustless exec <subdomain> -- <command> ...`
-- Autostarts proxy if not running and autostart is enabled
-- Assign a subdomain + suffix from a specified profile by `--profile` (or `$TRUSTLESS_PROFILE` via clap::env). Optinally `--domain` to specify by a suffix.
-- Pick a backend port. Use ephemeral port (0) to let the OS to assign a port, then release it and use as a `$PORT`
-- Register the name-to-backend mapping with the running proxy
-- Exec the user command with `PORT` and `HOST` env vars
-- Teardown mapping on exit. Use sidecar pattern to monitor the child process and ensure cleanup happens even if the child process is killed.
-  - Follow `mairu exec` pattern
+- **Proxy control API**
+- **`trustless exec`**
+- **AWS Lambda provider**
 
 ### Fill the gap with Portless
 
+- Error response should end with `\n`
 - Fancy but minimal html pages for humans
   - Error pages
   - Index of hosted pages
 - Find other feature parity
   - `trustless run` to auto-determine subdomain name
-
-### AWS Lambda provider
-
-### Utilities
-
-- Lazy launch of provider?
+- README that sounds fancy
 
 ### Release Engineering
 
@@ -49,6 +30,5 @@
 
 ## Misc quality
 
-- debounce route file (1s)
-- update docs/internal.md
 - cleanup meaningless tests
+- status must show routes first, providers later
