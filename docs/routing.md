@@ -65,6 +65,22 @@ If sanitization produces an empty string, that source is skipped and the next on
 
 Labels from `.trustless.json` `name` are used verbatim (not sanitized) -- you are expected to provide a valid DNS label.
 
+### Worktree-aware hostname composition
+
+When the current directory is inside a git worktree (a multi-worktree setup on a non-default branch), `trustless run` incorporates the branch name into the hostname to distinguish worktree checkouts from each other.
+
+**Detection**: Trustless checks for multiple worktrees via `git worktree list`, falling back to parsing the `.git` file and gitdir's HEAD when the git CLI is unavailable. Default branches (`main`, `master`) and detached HEAD are skipped — no worktree prefix is added.
+
+**Branch → prefix conversion**: Only the last segment after `/` is used (`feature/auth` → `auth`), then sanitized to a valid DNS label.
+
+**Hostname forms** (in order of preference):
+
+1. **Dot-separated** `{branch}.{project}.{suffix}` — used when a matching nested wildcard certificate exists. For example, with `*.myapp.dev.example.com`, branch `auth` and project `myapp` produces `auth.myapp.dev.example.com`.
+
+2. **Single-label fallback** `{project}--{branch}.{suffix}` — used when only a flat wildcard like `*.dev.example.com` is available. The same example produces `myapp--auth.dev.example.com`.
+
+This feature only applies to `trustless run` (where the subdomain is inferred). `trustless exec` always uses the explicitly provided subdomain.
+
 ## Domain resolution
 
 Once a subdomain label is determined (by either `run` or `exec`), it needs to be combined with a wildcard domain from the provider's certificate. This is where `--profile` and `--domain` come in.
@@ -93,7 +109,7 @@ trustless exec --domain=staging.example.com api rails server
 
 1. **One provider, one wildcard** -- everything is automatic: `trustless run rails server` → `<label>.dev.example.com`
 2. **Multiple providers** -- `--profile` required (or `TRUSTLESS_PROFILE`)
-3. **Multiple wildcard domains on the selected provider** -- `--domain` required
+3. **Multiple wildcard domains on the selected provider** -- when the subdomain contains multiple labels (e.g. `branch.myapp` from worktree detection), the best-matching wildcard is auto-selected by label overlap. A suffix whose leading labels match trailing labels of the subdomain is preferred. When no unambiguous match exists, `--domain` is required.
 4. **No wildcard domains** -- error (non-wildcard certificates can't generate subdomain hostnames)
 
 These rules apply identically to both `run` and `exec`.

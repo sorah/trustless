@@ -5,6 +5,10 @@ use crate::route::RouteError;
 pub(crate) enum HostnameSpec {
     /// Subdomain label — will be combined with a wildcard domain via resolve_hostname
     Label(String),
+    /// Subdomain label with a worktree prefix — tries `{worktree}.{label}` first (dot-separated,
+    /// leveraging `find_best_wildcard_suffix` for nested wildcard matching), then falls back to
+    /// `{label}--{worktree}` as a single label.
+    LabelWithWorktree { label: String, worktree: String },
     /// Full FQDN — used directly, bypasses resolve_hostname
     Full(String),
 }
@@ -17,6 +21,17 @@ pub(crate) struct ResolvedHostname {
 }
 
 impl HostnameSpec {
+    /// Upgrade `Label` → `LabelWithWorktree` if a worktree prefix is present.
+    /// Other variants are returned unchanged.
+    pub fn with_worktree(self, worktree: Option<String>) -> Self {
+        match (self, worktree) {
+            (HostnameSpec::Label(label), Some(worktree)) => {
+                HostnameSpec::LabelWithWorktree { label, worktree }
+            }
+            (spec, _) => spec,
+        }
+    }
+
     /// Resolve this spec into a concrete hostname.
     ///
     /// For `Label`, looks up provider info and combines the label with a wildcard domain suffix.
@@ -30,6 +45,30 @@ impl HostnameSpec {
         match self {
             HostnameSpec::Label(s) => {
                 let (hostname, suffix) = resolve_hostname(status, s, profile, domain)?;
+                Ok(ResolvedHostname {
+                    hostname,
+                    domain_suffix: Some(suffix),
+                })
+            }
+            HostnameSpec::LabelWithWorktree { label, worktree } => {
+                // Try dot-separated form: {worktree}.{label}.{rest} — works when a nested
+                // wildcard like *.{label}.{rest} exists. We look for a wildcard suffix that
+                // starts with "{label}." and use the worktree as subdomain under it.
+                let label_prefix = format!("{}.", label);
+                if let Ok(nested_suffix) =
+                    find_nested_wildcard_suffix(status, &label_prefix, profile, domain)
+                {
+                    let hostname = format!("{}.{}", worktree, nested_suffix);
+                    validate_hostname(&hostname)?;
+                    return Ok(ResolvedHostname {
+                        hostname,
+                        domain_suffix: Some(nested_suffix),
+                    });
+                }
+                // Fall back to single-label form: {label}--{worktree}
+                let dash_subdomain = format!("{}--{}", label, worktree);
+                let (hostname, suffix) =
+                    resolve_hostname(status, &dash_subdomain, profile, domain)?;
                 Ok(ResolvedHostname {
                     hostname,
                     domain_suffix: Some(suffix),
@@ -169,6 +208,67 @@ fn find_best_wildcard_suffix<'a>(subdomain: &str, suffixes: &[&'a str]) -> Optio
     }
 
     if ambiguous { None } else { best }
+}
+
+/// Find a wildcard domain suffix that starts with the given prefix (e.g. "myapp.").
+/// Used by `LabelWithWorktree` to check for nested wildcards like `*.myapp.dev.invalid`.
+/// Returns the full suffix (e.g. "myapp.dev.invalid") or an error if none found.
+fn find_nested_wildcard_suffix(
+    status: &crate::control::StatusResponse,
+    label_prefix: &str,
+    profile: Option<&str>,
+    domain: Option<&str>,
+) -> anyhow::Result<String> {
+    let provider = match profile {
+        Some(name) => status
+            .providers
+            .iter()
+            .find(|p| p.name == *name)
+            .ok_or_else(|| anyhow::anyhow!("provider profile '{}' not found", name))?,
+        None => {
+            if status.providers.len() == 1 {
+                &status.providers[0]
+            } else if status.providers.is_empty() {
+                anyhow::bail!("no providers configured");
+            } else {
+                let names: Vec<&str> = status.providers.iter().map(|p| p.name.as_str()).collect();
+                anyhow::bail!(
+                    "multiple providers configured ({}); use --profile to select one",
+                    names.join(", ")
+                );
+            }
+        }
+    };
+
+    let wildcard_domains: Vec<&str> = provider
+        .certificates
+        .iter()
+        .flat_map(|cert| cert.domains.iter())
+        .filter_map(|d| d.strip_prefix("*."))
+        .collect();
+
+    // If --domain is specified, check if it matches the prefix
+    if let Some(d) = domain {
+        if d.starts_with(label_prefix) && wildcard_domains.contains(&d) {
+            return Ok(d.to_string());
+        }
+        anyhow::bail!(
+            "domain '{}' does not match nested prefix '{}'",
+            d,
+            label_prefix
+        );
+    }
+
+    let matches: Vec<&&str> = wildcard_domains
+        .iter()
+        .filter(|d| d.starts_with(label_prefix))
+        .collect();
+
+    match matches.len() {
+        1 => Ok(matches[0].to_string()),
+        0 => anyhow::bail!("no nested wildcard matching '*.{}' found", label_prefix),
+        _ => anyhow::bail!("multiple nested wildcards matching '*.{}'", label_prefix),
+    }
 }
 
 /// Resolves subdomain + provider info into `(full_hostname, domain_suffix)`.
@@ -448,5 +548,38 @@ mod tests {
         let resolved = spec.resolve(&status, None, None).unwrap();
         assert_eq!(resolved.hostname, "custom.example.com");
         assert_eq!(resolved.domain_suffix, None);
+    }
+
+    #[test]
+    fn test_label_with_worktree_dot_form_with_nested_wildcard() {
+        // Provider has *.myapp.dev.invalid — dot form {worktree}.{label} should match
+        let status = make_status(vec![make_provider(
+            "default",
+            vec!["*.myapp.dev.invalid", "*.dev.invalid"],
+        )]);
+        let spec = HostnameSpec::LabelWithWorktree {
+            label: "myapp".to_string(),
+            worktree: "auth".to_string(),
+        };
+        let resolved = spec.resolve(&status, None, None).unwrap();
+        assert_eq!(resolved.hostname, "auth.myapp.dev.invalid");
+        assert_eq!(
+            resolved.domain_suffix,
+            Some("myapp.dev.invalid".to_string())
+        );
+    }
+
+    #[test]
+    fn test_label_with_worktree_falls_back_to_dash_form() {
+        // Provider only has *.dev.invalid — dot form "auth.myapp" would need 2 remaining
+        // labels which fails, so it falls back to "myapp--auth"
+        let status = make_status(vec![make_provider("default", vec!["*.dev.invalid"])]);
+        let spec = HostnameSpec::LabelWithWorktree {
+            label: "myapp".to_string(),
+            worktree: "auth".to_string(),
+        };
+        let resolved = spec.resolve(&status, None, None).unwrap();
+        assert_eq!(resolved.hostname, "myapp--auth.dev.invalid");
+        assert_eq!(resolved.domain_suffix, Some("dev.invalid".to_string()));
     }
 }
