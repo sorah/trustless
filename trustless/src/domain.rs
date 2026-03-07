@@ -126,6 +126,51 @@ pub fn sanitize_label(input: &str) -> Option<String> {
     }
 }
 
+/// Given a subdomain label and a list of wildcard domain suffixes (without `*.` prefix),
+/// find the best matching suffix using longest prefix matching.
+///
+/// A suffix is valid if, after removing overlapping trailing labels from the subdomain
+/// that match leading labels of the suffix, exactly 1 label remains (wildcard covers
+/// a single label only). Among valid suffixes, the one with the longest overlap wins.
+/// Returns `None` if zero or multiple suffixes tie.
+fn find_best_wildcard_suffix<'a>(subdomain: &str, suffixes: &[&'a str]) -> Option<&'a str> {
+    let sub_labels: Vec<&str> = subdomain.split('.').collect();
+
+    let mut best: Option<&str> = None;
+    let mut best_overlap: usize = 0;
+    let mut ambiguous = false;
+
+    for &suffix in suffixes {
+        let suffix_labels: Vec<&str> = suffix.split('.').collect();
+
+        // Find the overlap: how many trailing labels of subdomain match leading labels of suffix
+        let max_overlap = sub_labels.len().min(suffix_labels.len());
+        let mut overlap = 0;
+        for k in 1..=max_overlap {
+            // Check if last k labels of subdomain == first k labels of suffix
+            if sub_labels[sub_labels.len() - k..] == suffix_labels[..k] {
+                overlap = k;
+            }
+        }
+
+        // After removing overlapping labels, remaining subdomain labels count
+        let remaining = sub_labels.len() - overlap;
+        if remaining != 1 {
+            continue; // wildcard covers exactly one label
+        }
+
+        if overlap > best_overlap {
+            best = Some(suffix);
+            best_overlap = overlap;
+            ambiguous = false;
+        } else if overlap == best_overlap {
+            ambiguous = true;
+        }
+    }
+
+    if ambiguous { None } else { best }
+}
+
 /// Resolves subdomain + provider info into `(full_hostname, domain_suffix)`.
 pub(crate) fn resolve_hostname(
     status: &crate::control::StatusResponse,
@@ -182,6 +227,8 @@ pub(crate) fn resolve_hostname(
                     "no wildcard domains in provider '{}' certificates",
                     provider.name
                 );
+            } else if let Some(best) = find_best_wildcard_suffix(subdomain, &wildcard_domains) {
+                best
             } else {
                 anyhow::bail!(
                     "multiple wildcard domains in provider '{}'; use --domain to select one: {}",
@@ -317,6 +364,58 @@ mod tests {
         )]);
         let err = resolve_hostname(&status, "app", None, None).unwrap_err();
         assert!(err.to_string().contains("--domain"));
+    }
+
+    #[test]
+    fn test_find_best_wildcard_suffix_basic() {
+        // foo.bar with *.bar.dev.invalid and *.dev.invalid:
+        // bar.dev.invalid: overlap=1 (bar), remaining=1 (foo) → valid
+        // dev.invalid: overlap=0, remaining=2 (foo.bar) → invalid
+        let result = find_best_wildcard_suffix("foo.bar", &["bar.dev.invalid", "dev.invalid"]);
+        assert_eq!(result, Some("bar.dev.invalid"));
+    }
+
+    #[test]
+    fn test_find_best_wildcard_suffix_three_levels() {
+        // foo.baz.bar with three wildcard levels
+        let result = find_best_wildcard_suffix(
+            "foo.baz.bar",
+            &["baz.bar.dev.invalid", "bar.dev.invalid", "dev.invalid"],
+        );
+        assert_eq!(result, Some("baz.bar.dev.invalid"));
+    }
+
+    #[test]
+    fn test_find_best_wildcard_suffix_ambiguous() {
+        // foo with *.bar.dev.invalid and *.dev.invalid:
+        // bar.dev.invalid: overlap=0, remaining=1 (foo) → valid
+        // dev.invalid: overlap=0, remaining=1 (foo) → valid
+        // Both valid with overlap=0 → ambiguous
+        let result = find_best_wildcard_suffix("foo", &["bar.dev.invalid", "dev.invalid"]);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_resolve_hostname_auto_selects_by_prefix_match() {
+        let status = make_status(vec![make_provider(
+            "default",
+            vec!["*.bar.dev.invalid", "*.dev.invalid"],
+        )]);
+        let (hostname, suffix) = resolve_hostname(&status, "foo.bar", None, None).unwrap();
+        assert_eq!(hostname, "foo.bar.bar.dev.invalid");
+        assert_eq!(suffix, "bar.dev.invalid");
+    }
+
+    #[test]
+    fn test_resolve_hostname_explicit_domain_overrides_auto() {
+        let status = make_status(vec![make_provider(
+            "default",
+            vec!["*.bar.dev.invalid", "*.dev.invalid"],
+        )]);
+        let (hostname, suffix) =
+            resolve_hostname(&status, "foo.bar", None, Some("dev.invalid")).unwrap();
+        assert_eq!(hostname, "foo.bar.dev.invalid");
+        assert_eq!(suffix, "dev.invalid");
     }
 
     #[test]
