@@ -53,6 +53,9 @@ jobs:
           - lambda-arch: x86-64
             arch-suffix: x86_64
     runs-on: ubuntu-latest
+    outputs:
+      sha512-arm64: ${{ steps.sha512.outputs.sha512-arm64 }}
+      sha512-x86_64: ${{ steps.sha512.outputs.sha512-x86_64 }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: dtolnay/rust-toolchain@stable
@@ -64,3 +67,25 @@ jobs:
       - run: gh release upload "${{ github.ref_name }}" "target/lambda/bootstrap/trustless-provider-lambda-function.${{ matrix.arch-suffix }}.zip" --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compute source_sha512
+        id: sha512
+        run: |
+          hash=$(sha512sum < "target/lambda/bootstrap/trustless-provider-lambda-function.${{ matrix.arch-suffix }}.zip" | awk '{print $1}' | xxd -r -p | base64 -w 0)
+          echo "sha512-${{ matrix.arch-suffix }}=${hash}" >> "$GITHUB_OUTPUT"
+
+  update-release-description:
+    if: startsWith(github.ref_name, 'trustless-provider-lambda/')
+    needs: upload-lambda-function
+    runs-on: ubuntu-slim
+    steps:
+      - name: Append deploy info to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA512_ARM64: ${{ needs.upload-lambda-function.outputs.sha512-arm64 }}
+          SHA512_X86_64: ${{ needs.upload-lambda-function.outputs.sha512-x86_64 }}
+        run: |
+          encoded_tag="${GITHUB_REF_NAME/\//%2F}"
+          existing_body="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json body -q '.body')"
+          base_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${encoded_tag}"
+          deploy_block="$(printf '\n#### Deploy\n\nNote: These sums are `sha512_hex(base64(zip blob))` due to Terraform limitation.\n\n##### arm64\n\n```tf\nsource_url    = "%s/trustless-provider-lambda-function.arm64.zip"\nsource_sha512 = "%s"\n```\n\n##### x86_64\n\n```tf\nsource_url    = "%s/trustless-provider-lambda-function.x86_64.zip"\nsource_sha512 = "%s"\n```' "$base_url" "$SHA512_ARM64" "$base_url" "$SHA512_X86_64")"
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --notes "${existing_body}${deploy_block}"
