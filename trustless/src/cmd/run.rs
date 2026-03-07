@@ -29,10 +29,10 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
     }
     let hostname_spec = infer_project_name()?;
     match &hostname_spec {
-        super::exec::HostnameSpec::Label(s) => {
+        crate::domain::HostnameSpec::Label(s) => {
             eprintln!("trustless: inferred subdomain '{}'", s);
         }
-        super::exec::HostnameSpec::Full(h) => {
+        crate::domain::HostnameSpec::Full(h) => {
             eprintln!("trustless: using hostname '{}'", h);
         }
     }
@@ -47,42 +47,42 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
     super::exec::run_exec(params)
 }
 
-fn infer_project_name() -> anyhow::Result<super::exec::HostnameSpec> {
+fn infer_project_name() -> anyhow::Result<crate::domain::HostnameSpec> {
     let cwd = std::env::current_dir()?;
 
     // 1. .trustless.json (highest priority)
     if let Some(tj) = find_trustless_json(&cwd) {
         match tj.name {
             NameOptions::Domain { domain } => {
-                crate::route::validate_hostname(&domain)?;
-                return Ok(super::exec::HostnameSpec::Full(domain));
+                crate::domain::validate_hostname(&domain)?;
+                return Ok(crate::domain::HostnameSpec::Full(domain));
             }
             NameOptions::Label { name } => {
-                return Ok(super::exec::HostnameSpec::Label(name));
+                return Ok(crate::domain::HostnameSpec::Label(name));
             }
         }
     }
 
     // 2. Walk up looking for package.json
     if let Some(name) = find_package_json_name(&cwd)
-        && let Some(sanitized) = crate::route::sanitize_label(&name)
+        && let Some(sanitized) = crate::domain::sanitize_label(&name)
     {
-        return Ok(super::exec::HostnameSpec::Label(sanitized));
+        return Ok(crate::domain::HostnameSpec::Label(sanitized));
     }
 
     // 3. Git repo root directory name
     if let Some(git_root) = find_git_root(&cwd)
         && let Some(basename) = git_root.file_name().and_then(|n| n.to_str())
-        && let Some(sanitized) = crate::route::sanitize_label(basename)
+        && let Some(sanitized) = crate::domain::sanitize_label(basename)
     {
-        return Ok(super::exec::HostnameSpec::Label(sanitized));
+        return Ok(crate::domain::HostnameSpec::Label(sanitized));
     }
 
     // 4. Current directory basename
     if let Some(basename) = cwd.file_name().and_then(|n| n.to_str())
-        && let Some(sanitized) = crate::route::sanitize_label(basename)
+        && let Some(sanitized) = crate::domain::sanitize_label(basename)
     {
-        return Ok(super::exec::HostnameSpec::Label(sanitized));
+        return Ok(crate::domain::HostnameSpec::Label(sanitized));
     }
 
     anyhow::bail!(

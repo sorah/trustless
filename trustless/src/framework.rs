@@ -8,8 +8,8 @@ pub trait FrameworkBehavior {
     fn build_command(&self, command: &[OsString], port: u16) -> Vec<OsString>;
 
     /// Extra environment variables to set.
-    /// `wildcard_domain` is the cert's wildcard suffix (e.g. "dev.example.com").
-    fn extra_env(&self, wildcard_domain: Option<&str>) -> Vec<(OsString, OsString)>;
+    /// `domain_suffix` is the domain suffix from the wildcard cert (e.g. "dev.example.com").
+    fn extra_env(&self, domain_suffix: Option<&str>) -> Vec<(OsString, OsString)>;
 }
 
 pub struct Vite;
@@ -80,9 +80,9 @@ fn build_command_common(
     args
 }
 
-fn vite_extra_env(wildcard_domain: Option<&str>) -> Vec<(OsString, OsString)> {
+fn vite_extra_env(domain_suffix: Option<&str>) -> Vec<(OsString, OsString)> {
     let mut env = Vec::new();
-    if let Some(wd) = wildcard_domain {
+    if let Some(wd) = domain_suffix {
         env.push((
             "__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS".into(),
             format!(".{}", wd).into(),
@@ -96,8 +96,8 @@ impl FrameworkBehavior for Vite {
         build_command_common(command, port, true, "127.0.0.1")
     }
 
-    fn extra_env(&self, wildcard_domain: Option<&str>) -> Vec<(OsString, OsString)> {
-        vite_extra_env(wildcard_domain)
+    fn extra_env(&self, domain_suffix: Option<&str>) -> Vec<(OsString, OsString)> {
+        vite_extra_env(domain_suffix)
     }
 }
 
@@ -106,8 +106,8 @@ impl FrameworkBehavior for ReactRouter {
         build_command_common(command, port, true, "127.0.0.1")
     }
 
-    fn extra_env(&self, wildcard_domain: Option<&str>) -> Vec<(OsString, OsString)> {
-        vite_extra_env(wildcard_domain)
+    fn extra_env(&self, domain_suffix: Option<&str>) -> Vec<(OsString, OsString)> {
+        vite_extra_env(domain_suffix)
     }
 }
 
@@ -116,7 +116,7 @@ impl FrameworkBehavior for Astro {
         build_command_common(command, port, false, "127.0.0.1")
     }
 
-    fn extra_env(&self, _wildcard_domain: Option<&str>) -> Vec<(OsString, OsString)> {
+    fn extra_env(&self, _domain_suffix: Option<&str>) -> Vec<(OsString, OsString)> {
         Vec::new()
     }
 }
@@ -126,7 +126,7 @@ impl FrameworkBehavior for Angular {
         build_command_common(command, port, false, "127.0.0.1")
     }
 
-    fn extra_env(&self, _wildcard_domain: Option<&str>) -> Vec<(OsString, OsString)> {
+    fn extra_env(&self, _domain_suffix: Option<&str>) -> Vec<(OsString, OsString)> {
         Vec::new()
     }
 }
@@ -136,7 +136,7 @@ impl FrameworkBehavior for ReactNative {
         build_command_common(command, port, false, "127.0.0.1")
     }
 
-    fn extra_env(&self, _wildcard_domain: Option<&str>) -> Vec<(OsString, OsString)> {
+    fn extra_env(&self, _domain_suffix: Option<&str>) -> Vec<(OsString, OsString)> {
         Vec::new()
     }
 }
@@ -146,7 +146,7 @@ impl FrameworkBehavior for Expo {
         build_command_common(command, port, false, "localhost")
     }
 
-    fn extra_env(&self, _wildcard_domain: Option<&str>) -> Vec<(OsString, OsString)> {
+    fn extra_env(&self, _domain_suffix: Option<&str>) -> Vec<(OsString, OsString)> {
         Vec::new()
     }
 }

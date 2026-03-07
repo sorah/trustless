@@ -26,13 +26,7 @@ pub struct ExecArgs {
     command: Vec<std::ffi::OsString>,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) enum HostnameSpec {
-    /// Subdomain label — will be combined with a wildcard domain via resolve_hostname
-    Label(String),
-    /// Full FQDN — used directly, bypasses resolve_hostname
-    Full(String),
-}
+use crate::domain::HostnameSpec;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ExecParams {
@@ -64,7 +58,7 @@ enum ExecIpcMessage {
         hostname: String,
         port: u16,
         proxy_port: u16,
-        wildcard_domain: Option<String>,
+        domain_suffix: Option<String>,
     },
     Error {
         message: String,
@@ -199,21 +193,11 @@ async fn do_sidecar_inner(params: &ExecParams) -> anyhow::Result<(ExecIpcMessage
     let client = crate::cmd::proxy::connect_or_start().await?;
     let status = client.status().await?;
 
-    let (hostname, wildcard_domain) = match &params.hostname_spec {
-        HostnameSpec::Label(s) => {
-            let (h, suffix) = resolve_hostname(
-                &status,
-                s,
-                params.profile.as_deref(),
-                params.domain.as_deref(),
-            )?;
-            (h, Some(suffix))
-        }
-        HostnameSpec::Full(h) => {
-            crate::route::validate_hostname(h)?;
-            (h.clone(), None)
-        }
-    };
+    let resolved = params.hostname_spec.resolve(
+        &status,
+        params.profile.as_deref(),
+        params.domain.as_deref(),
+    )?;
     let port = match params.port {
         Some(p) => p,
         None => allocate_ephemeral_port()?,
@@ -221,92 +205,21 @@ async fn do_sidecar_inner(params: &ExecParams) -> anyhow::Result<(ExecIpcMessage
 
     let route_table = crate::route::RouteTable::new(crate::config::state_dir());
     let backend: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
-    route_table.add_route(&hostname, backend, true, false)?;
+    route_table.add_route(&resolved.hostname, backend, true, false)?;
 
     let guard = RouteGuard {
         route_table,
-        hostname: hostname.clone(),
+        hostname: resolved.hostname.clone(),
     };
 
     let msg = ExecIpcMessage::Ready {
-        hostname,
+        hostname: resolved.hostname,
         port,
         proxy_port: status.port,
-        wildcard_domain,
+        domain_suffix: resolved.domain_suffix,
     };
 
     Ok((msg, guard))
-}
-
-/// Resolves subdomain + provider info into `(full_hostname, wildcard_domain_suffix)`.
-pub(crate) fn resolve_hostname(
-    status: &crate::control::StatusResponse,
-    subdomain: &str,
-    profile: Option<&str>,
-    domain: Option<&str>,
-) -> anyhow::Result<(String, String)> {
-    let provider = match profile {
-        Some(name) => status
-            .providers
-            .iter()
-            .find(|p| p.name == *name)
-            .ok_or_else(|| anyhow::anyhow!("provider profile '{}' not found", name))?,
-        None => {
-            if status.providers.len() == 1 {
-                &status.providers[0]
-            } else if status.providers.is_empty() {
-                anyhow::bail!("no providers configured; run 'trustless setup' first");
-            } else {
-                let names: Vec<&str> = status.providers.iter().map(|p| p.name.as_str()).collect();
-                anyhow::bail!(
-                    "multiple providers configured ({}); use --profile to select one",
-                    names.join(", ")
-                );
-            }
-        }
-    };
-
-    let wildcard_domains: Vec<&str> = provider
-        .certificates
-        .iter()
-        .flat_map(|cert| cert.domains.iter())
-        .filter_map(|d| d.strip_prefix("*."))
-        .collect();
-
-    let suffix = match domain {
-        Some(domain) => {
-            if wildcard_domains.contains(&domain) {
-                domain
-            } else {
-                anyhow::bail!(
-                    "domain '{}' not found in provider '{}' certificates; available: {}",
-                    domain,
-                    provider.name,
-                    wildcard_domains.join(", ")
-                );
-            }
-        }
-        None => {
-            if wildcard_domains.len() == 1 {
-                wildcard_domains[0]
-            } else if wildcard_domains.is_empty() {
-                anyhow::bail!(
-                    "no wildcard domains in provider '{}' certificates",
-                    provider.name
-                );
-            } else {
-                anyhow::bail!(
-                    "multiple wildcard domains in provider '{}'; use --domain to select one: {}",
-                    provider.name,
-                    wildcard_domains.join(", ")
-                );
-            }
-        }
-    };
-
-    let hostname = format!("{}.{}", subdomain, suffix);
-    crate::route::validate_hostname(&hostname)?;
-    Ok((hostname, suffix.to_string()))
 }
 
 fn allocate_ephemeral_port() -> anyhow::Result<u16> {
@@ -357,13 +270,13 @@ mod executor {
                 hostname,
                 port,
                 proxy_port,
-                wildcard_domain,
+                domain_suffix,
             } => {
                 eprintln!(
                     "trustless: https://{}:{} -> 127.0.0.1:{}",
                     hostname, proxy_port, port
                 );
-                execute(hostname, port, proxy_port, wildcard_domain, params)
+                execute(hostname, port, proxy_port, domain_suffix, params)
             }
             ExecIpcMessage::Error { message } => {
                 eprintln!("trustless: error: {}", message);
@@ -376,7 +289,7 @@ mod executor {
         hostname: String,
         port: u16,
         proxy_port: u16,
-        wildcard_domain: Option<String>,
+        domain_suffix: Option<String>,
         params: ExecParams,
     ) -> anyhow::Result<()> {
         use std::os::unix::process::CommandExt;
@@ -404,7 +317,7 @@ mod executor {
         {
             let built = fw.build_command(&params.command, port);
             tracing::trace!(command = ?built, "framework flags injected");
-            for (k, v) in fw.extra_env(wildcard_domain.as_deref()) {
+            for (k, v) in fw.extra_env(domain_suffix.as_deref()) {
                 // SAFETY: same single-threaded executor context as above
                 unsafe { std::env::set_var(&k, &v) };
             }
@@ -460,7 +373,7 @@ mod tests {
             hostname: "api.dev.invalid".to_string(),
             port: 3000,
             proxy_port: 1443,
-            wildcard_domain: Some("dev.invalid".to_string()),
+            domain_suffix: Some("dev.invalid".to_string()),
         };
         let json = serde_json::to_vec(&msg).unwrap();
         let decoded: ExecIpcMessage = serde_json::from_slice(&json).unwrap();
@@ -469,12 +382,12 @@ mod tests {
                 hostname,
                 port,
                 proxy_port,
-                wildcard_domain,
+                domain_suffix,
             } => {
                 assert_eq!(hostname, "api.dev.invalid");
                 assert_eq!(port, 3000);
                 assert_eq!(proxy_port, 1443);
-                assert_eq!(wildcard_domain, Some("dev.invalid".to_string()));
+                assert_eq!(domain_suffix, Some("dev.invalid".to_string()));
             }
             _ => panic!("expected Ready"),
         }
@@ -499,102 +412,5 @@ mod tests {
     fn test_allocate_ephemeral_port() {
         let port = allocate_ephemeral_port().unwrap();
         assert!(port > 0);
-    }
-
-    fn make_status(
-        providers: Vec<crate::provider::ProviderStatusInfo>,
-    ) -> crate::control::StatusResponse {
-        crate::control::StatusResponse {
-            pid: 1,
-            port: 1443,
-            providers,
-            routes: std::collections::HashMap::new(),
-        }
-    }
-
-    fn make_provider(name: &str, domains: Vec<&str>) -> crate::provider::ProviderStatusInfo {
-        crate::provider::ProviderStatusInfo {
-            name: name.to_string(),
-            state: crate::provider::ProviderState::Running,
-            certificates: vec![crate::provider::CertificateStatusInfo {
-                id: "test".to_string(),
-                domains: domains.into_iter().map(|s| s.to_string()).collect(),
-                issuer: "test".to_string(),
-                serial: "00".to_string(),
-                not_after: "2099-01-01".to_string(),
-            }],
-            errors: vec![],
-        }
-    }
-
-    #[test]
-    fn test_resolve_hostname_single_provider_single_wildcard() {
-        let status = make_status(vec![make_provider("default", vec!["*.dev.invalid"])]);
-        let (hostname, suffix) = resolve_hostname(&status, "api", None, None).unwrap();
-        assert_eq!(hostname, "api.dev.invalid");
-        assert_eq!(suffix, "dev.invalid");
-    }
-
-    #[test]
-    fn test_resolve_hostname_with_profile() {
-        let status = make_status(vec![
-            make_provider("alpha", vec!["*.alpha.invalid"]),
-            make_provider("beta", vec!["*.beta.invalid"]),
-        ]);
-        let (hostname, suffix) = resolve_hostname(&status, "app", Some("beta"), None).unwrap();
-        assert_eq!(hostname, "app.beta.invalid");
-        assert_eq!(suffix, "beta.invalid");
-    }
-
-    #[test]
-    fn test_resolve_hostname_with_domain() {
-        let status = make_status(vec![make_provider(
-            "default",
-            vec!["*.a.invalid", "*.b.invalid"],
-        )]);
-        let (hostname, suffix) = resolve_hostname(&status, "app", None, Some("b.invalid")).unwrap();
-        assert_eq!(hostname, "app.b.invalid");
-        assert_eq!(suffix, "b.invalid");
-    }
-
-    #[test]
-    fn test_resolve_hostname_no_providers() {
-        let status = make_status(vec![]);
-        let err = resolve_hostname(&status, "app", None, None).unwrap_err();
-        assert!(err.to_string().contains("no providers configured"));
-    }
-
-    #[test]
-    fn test_resolve_hostname_ambiguous_providers() {
-        let status = make_status(vec![
-            make_provider("a", vec!["*.a.invalid"]),
-            make_provider("b", vec!["*.b.invalid"]),
-        ]);
-        let err = resolve_hostname(&status, "app", None, None).unwrap_err();
-        assert!(err.to_string().contains("--profile"));
-    }
-
-    #[test]
-    fn test_resolve_hostname_ambiguous_domains() {
-        let status = make_status(vec![make_provider(
-            "default",
-            vec!["*.a.invalid", "*.b.invalid"],
-        )]);
-        let err = resolve_hostname(&status, "app", None, None).unwrap_err();
-        assert!(err.to_string().contains("--domain"));
-    }
-
-    #[test]
-    fn test_resolve_hostname_profile_not_found() {
-        let status = make_status(vec![make_provider("default", vec!["*.dev.invalid"])]);
-        let err = resolve_hostname(&status, "app", Some("nonexistent"), None).unwrap_err();
-        assert!(err.to_string().contains("nonexistent"));
-    }
-
-    #[test]
-    fn test_resolve_hostname_domain_not_found() {
-        let status = make_status(vec![make_provider("default", vec!["*.dev.invalid"])]);
-        let err = resolve_hostname(&status, "app", None, Some("other.invalid")).unwrap_err();
-        assert!(err.to_string().contains("other.invalid"));
     }
 }

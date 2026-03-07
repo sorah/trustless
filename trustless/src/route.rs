@@ -32,86 +32,6 @@ pub struct RouteTable {
     inner: std::sync::Arc<parking_lot::Mutex<Inner>>,
 }
 
-pub fn validate_hostname(host: &str) -> Result<(), RouteError> {
-    if host.eq_ignore_ascii_case("trustless") {
-        return Err(RouteError::ReservedHostname(host.to_string()));
-    }
-    if host.is_empty() {
-        return Err(RouteError::InvalidHostname(
-            host.to_string(),
-            "hostname must not be empty".to_string(),
-        ));
-    }
-    if host.len() > 253 {
-        return Err(RouteError::InvalidHostname(
-            host.to_string(),
-            "hostname too long".to_string(),
-        ));
-    }
-    for label in host.split('.') {
-        if label.is_empty() {
-            return Err(RouteError::InvalidHostname(
-                host.to_string(),
-                "empty label".to_string(),
-            ));
-        }
-        if label.len() > 63 {
-            return Err(RouteError::InvalidHostname(
-                host.to_string(),
-                "label too long".to_string(),
-            ));
-        }
-        if !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-            return Err(RouteError::InvalidHostname(
-                host.to_string(),
-                "invalid characters in label".to_string(),
-            ));
-        }
-        if label.starts_with('-') || label.ends_with('-') {
-            return Err(RouteError::InvalidHostname(
-                host.to_string(),
-                "label must not start or end with a hyphen".to_string(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// Sanitize an arbitrary string into a valid DNS label.
-/// Lowercases, replaces invalid characters with hyphens, collapses consecutive
-/// hyphens, and trims leading/trailing hyphens. Returns `None` if the result is empty.
-pub fn sanitize_label(input: &str) -> Option<String> {
-    let s: String = input
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' {
-                c.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    let trimmed = s.trim_matches('-');
-    let mut result = String::with_capacity(trimmed.len());
-    let mut prev_hyphen = false;
-    for c in trimmed.chars() {
-        if c == '-' {
-            if !prev_hyphen {
-                result.push('-');
-            }
-            prev_hyphen = true;
-        } else {
-            result.push(c);
-            prev_hyphen = false;
-        }
-    }
-    if result.is_empty() {
-        None
-    } else {
-        Some(result)
-    }
-}
-
 pub fn strip_port(host: &str) -> &str {
     if let Some(rest) = host.strip_prefix('[') {
         // Bracketed IPv6: [::1]:8080 or [::1]
@@ -254,7 +174,7 @@ impl RouteTable {
         force: bool,
         allow_non_localhost: bool,
     ) -> Result<(), RouteError> {
-        validate_hostname(host)?;
+        crate::domain::validate_hostname(host)?;
         if !allow_non_localhost && !backend.ip().is_loopback() {
             return Err(RouteError::NonLoopbackBackend(backend));
         }
@@ -472,25 +392,6 @@ mod tests {
 
         let resolved = table.resolve("nonexistent.host").unwrap();
         assert_eq!(resolved, None);
-    }
-
-    #[test]
-    fn test_sanitize_label() {
-        assert_eq!(sanitize_label("MyApp"), Some("myapp".to_string()));
-        assert_eq!(sanitize_label("my_app"), Some("my-app".to_string()));
-        assert_eq!(sanitize_label("my app"), Some("my-app".to_string()));
-        assert_eq!(sanitize_label("my--app"), Some("my-app".to_string()));
-        assert_eq!(sanitize_label("a___b"), Some("a-b".to_string()));
-        assert_eq!(sanitize_label("--myapp--"), Some("myapp".to_string()));
-        assert_eq!(sanitize_label("@myapp!"), Some("myapp".to_string()));
-        assert_eq!(sanitize_label("@@@"), None);
-        assert_eq!(sanitize_label("---"), None);
-        assert_eq!(sanitize_label(""), None);
-        assert_eq!(sanitize_label("my-app-123"), Some("my-app-123".to_string()));
-        assert_eq!(
-            sanitize_label("My_Feature_Branch"),
-            Some("my-feature-branch".to_string())
-        );
     }
 
     #[test]
