@@ -250,7 +250,7 @@ async fn handle_request(
     strip_hop_by_hop_headers(&mut parts.headers, false);
     parts.headers.remove(HOPS_HEADER);
 
-    let forwarded = build_forwarded_headers(client_addr, original_host, "http");
+    let forwarded = build_forwarded_headers(client_addr, original_host, "https");
 
     let mut request_builder = state
         .client
@@ -301,7 +301,7 @@ async fn handle_upgrade(
     original_host: &str,
     hops: u32,
 ) -> Result<axum::response::Response, ProxyError> {
-    let forwarded = build_forwarded_headers(client_addr, original_host, "http");
+    let forwarded = build_forwarded_headers(client_addr, original_host, "https");
 
     // Build the request to the backend
     let (mut parts, _body) = req.into_parts();
