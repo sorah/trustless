@@ -27,13 +27,13 @@ data "http" "source" {
 
 resource "local_file" "source" {
   filename       = "${path.module}/.terraform/source-${local.source_hash}.zip"
-  content_base64 = data.http.source.response_body_base64
+  content_base64 = sensitive(data.http.source.response_body_base64)
 }
 
 resource "aws_lambda_function" "this" {
   function_name    = var.function_name
   filename         = local_file.source.filename
-  source_code_hash = filebase64sha256(local_file.source.filename)
+  source_code_hash = local_file.source.content_sha256
 
   runtime       = "provided.al2023"
   handler       = "bootstrap"

@@ -24,8 +24,12 @@ module "trustless_provider" {
   source = "github.com/sorah/trustless//trustless-provider-lambda-function/terraform"
 
   function_name = "my-trustless-provider"
-  source_url    = "https://github.com/sorah/trustless/releases/download/v0.1.0/trustless-provider-lambda-function-x86_64.zip"
-  # source_sha512 = "..."  # optional; SHA-512 of the base64-encoded zip content
+  source_url    = "https://github.com/sorah/trustless/releases/download/trustless-provider-lambda%2Fv0.1.0/trustless-provider-lambda-function.arm64.zip"
+  architecture  = "arm64"
+
+  ### optional; SHA-512 of the base64-encoded zip content
+  # source_sha512 = "..."
+  # # curl -L "${source_url}" |base64 -w 0 |sha512sum
 
   iam_role_arn = aws_iam_role.trustless.arn
 
@@ -34,7 +38,6 @@ module "trustless_provider" {
     urls = ["s3://my-bucket/certs/"]
   }
 
-  # architecture = "x86_64"  # default; set to "arm64" for Graviton
   # memory_size  = 256        # MB, default
   # timeout      = 30         # seconds, default
   # key_passphrase_ssm_arn = "arn:aws:ssm:us-east-1:123456789012:parameter/my-passphrase"
