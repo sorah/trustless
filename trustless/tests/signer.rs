@@ -17,16 +17,34 @@ fn setup_cert_dir(domain: &str, sans: Vec<String>) -> (tempfile::TempDir, rcgen:
 }
 
 fn stub_provider_binary() -> std::path::PathBuf {
-    // The test binary lives in target/debug/deps/; the stub provider binary is in target/debug/
-    let mut path = std::env::current_exe().unwrap();
+    // The test binary lives in target/{<target>/}debug/deps/; the stub provider binary is in
+    // target/{<target>/}debug/. When `cargo test --target <triple>` is used, the path includes the
+    // target triple component. We derive it from the exe path so the fallback build places the
+    // binary in the same directory.
+    let exe = std::env::current_exe().unwrap();
+    let mut path = exe.clone();
     path.pop(); // remove the test binary name
     path.pop(); // remove "deps"
+    // Now at target/{<target>/}debug/
     path.push("trustless-provider-stub");
     if !path.exists() {
-        let status = std::process::Command::new(env!("CARGO"))
-            .args(["build", "-p", "trustless-provider-stub"])
-            .status()
-            .expect("failed to run cargo build");
+        let mut cmd = std::process::Command::new(env!("CARGO"));
+        cmd.args(["build", "-p", "trustless-provider-stub"]);
+        // Detect --target from exe path: if the grandparent of "debug" isn't "target", there's a
+        // target triple component in the path (e.g. target/<triple>/debug/deps/<exe>).
+        let components: Vec<_> = exe.components().collect();
+        // Find "deps" then walk up: deps -> debug -> maybe <triple> -> target
+        if let Some(deps_idx) = components.iter().position(|c| c.as_os_str() == "deps") {
+            // deps_idx-1 = debug, deps_idx-2 = maybe <triple> or "target"
+            if deps_idx >= 3 {
+                let maybe_target = components[deps_idx - 2].as_os_str().to_str().unwrap_or("");
+                let above_that = components[deps_idx - 3].as_os_str().to_str().unwrap_or("");
+                if above_that == "target" && maybe_target != "target" {
+                    cmd.args(["--target", maybe_target]);
+                }
+            }
+        }
+        let status = cmd.status().expect("failed to run cargo build");
         assert!(
             status.success(),
             "cargo build -p trustless-provider-stub failed"
