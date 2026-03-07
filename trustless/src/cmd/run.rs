@@ -14,6 +14,10 @@ pub struct RunArgs {
     #[arg(long)]
     port: Option<u16>,
 
+    /// Disable framework-specific flag injection (e.g. --port, --host for Vite/Astro)
+    #[arg(long)]
+    no_framework: bool,
+
     /// Command line to execute.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     command: Vec<std::ffi::OsString>,
@@ -37,6 +41,7 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
         profile: args.profile.clone(),
         domain: args.domain.clone(),
         port: args.port,
+        no_framework: args.no_framework,
         command: args.command.clone(),
     };
     super::exec::run_exec(params)

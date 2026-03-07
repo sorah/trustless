@@ -17,6 +17,10 @@ pub struct ExecArgs {
     #[arg(long)]
     port: Option<u16>,
 
+    /// Disable framework-specific flag injection (e.g. --port, --host for Vite/Astro)
+    #[arg(long)]
+    no_framework: bool,
+
     /// Command line to execute.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     command: Vec<std::ffi::OsString>,
@@ -36,6 +40,7 @@ pub(crate) struct ExecParams {
     pub profile: Option<String>,
     pub domain: Option<String>,
     pub port: Option<u16>,
+    pub no_framework: bool,
     pub command: Vec<std::ffi::OsString>,
 }
 
@@ -46,6 +51,7 @@ impl From<ExecArgs> for ExecParams {
             profile: args.profile,
             domain: args.domain,
             port: args.port,
+            no_framework: args.no_framework,
             command: args.command,
         }
     }
@@ -58,6 +64,7 @@ enum ExecIpcMessage {
         hostname: String,
         port: u16,
         proxy_port: u16,
+        wildcard_domain: Option<String>,
     },
     Error {
         message: String,
@@ -192,16 +199,19 @@ async fn do_sidecar_inner(params: &ExecParams) -> anyhow::Result<(ExecIpcMessage
     let client = crate::cmd::proxy::connect_or_start().await?;
     let status = client.status().await?;
 
-    let hostname = match &params.hostname_spec {
-        HostnameSpec::Label(s) => resolve_hostname(
-            &status,
-            s,
-            params.profile.as_deref(),
-            params.domain.as_deref(),
-        )?,
+    let (hostname, wildcard_domain) = match &params.hostname_spec {
+        HostnameSpec::Label(s) => {
+            let (h, suffix) = resolve_hostname(
+                &status,
+                s,
+                params.profile.as_deref(),
+                params.domain.as_deref(),
+            )?;
+            (h, Some(suffix))
+        }
         HostnameSpec::Full(h) => {
             crate::route::validate_hostname(h)?;
-            h.clone()
+            (h.clone(), None)
         }
     };
     let port = match params.port {
@@ -222,17 +232,19 @@ async fn do_sidecar_inner(params: &ExecParams) -> anyhow::Result<(ExecIpcMessage
         hostname,
         port,
         proxy_port: status.port,
+        wildcard_domain,
     };
 
     Ok((msg, guard))
 }
 
+/// Resolves subdomain + provider info into `(full_hostname, wildcard_domain_suffix)`.
 pub(crate) fn resolve_hostname(
     status: &crate::control::StatusResponse,
     subdomain: &str,
     profile: Option<&str>,
     domain: Option<&str>,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<(String, String)> {
     let provider = match profile {
         Some(name) => status
             .providers
@@ -294,7 +306,7 @@ pub(crate) fn resolve_hostname(
 
     let hostname = format!("{}.{}", subdomain, suffix);
     crate::route::validate_hostname(&hostname)?;
-    Ok(hostname)
+    Ok((hostname, suffix.to_string()))
 }
 
 fn allocate_ephemeral_port() -> anyhow::Result<u16> {
@@ -320,6 +332,7 @@ fn start_ignoring_signals() {
 
 mod executor {
     use super::*;
+    use crate::framework::FrameworkBehavior as _;
 
     #[tracing::instrument(name = "exec_executor", skip_all)]
     pub(super) fn run(ipc_fd: std::os::fd::OwnedFd, params: ExecParams) -> anyhow::Result<()> {
@@ -344,12 +357,13 @@ mod executor {
                 hostname,
                 port,
                 proxy_port,
+                wildcard_domain,
             } => {
                 eprintln!(
                     "trustless: https://{}:{} -> 127.0.0.1:{}",
                     hostname, proxy_port, port
                 );
-                execute(hostname, port, proxy_port, params)
+                execute(hostname, port, proxy_port, wildcard_domain, params)
             }
             ExecIpcMessage::Error { message } => {
                 eprintln!("trustless: error: {}", message);
@@ -362,6 +376,7 @@ mod executor {
         hostname: String,
         port: u16,
         proxy_port: u16,
+        wildcard_domain: Option<String>,
         params: ExecParams,
     ) -> anyhow::Result<()> {
         use std::os::unix::process::CommandExt;
@@ -378,10 +393,31 @@ mod executor {
             std::env::set_var("HOST", &hostname);
             std::env::set_var("TRUSTLESS_HOST", &hostname);
             std::env::set_var("TRUSTLESS_PORT", proxy_port.to_string());
+            std::env::set_var(
+                "TRUSTLESS_URL",
+                format!("https://{}:{}", hostname, proxy_port),
+            );
         }
 
-        let err = std::process::Command::new(arg0)
-            .args(&params.command[1..])
+        let (exec_arg0, exec_args) = if !params.no_framework
+            && let Some(fw) = crate::framework::detect(&params.command)
+        {
+            let built = fw.build_command(&params.command, port);
+            tracing::trace!(command = ?built, "framework flags injected");
+            for (k, v) in fw.extra_env(wildcard_domain.as_deref()) {
+                // SAFETY: same single-threaded executor context as above
+                unsafe { std::env::set_var(&k, &v) };
+            }
+            let (first, rest) = built
+                .split_first()
+                .ok_or_else(|| anyhow::anyhow!("framework build_command returned empty"))?;
+            (first.clone(), rest.to_vec())
+        } else {
+            (arg0.clone(), params.command[1..].to_vec())
+        };
+
+        let err = std::process::Command::new(&exec_arg0)
+            .args(&exec_args)
             .exec();
         anyhow::bail!("couldn't exec the command line: {}", err);
     }
@@ -424,6 +460,7 @@ mod tests {
             hostname: "api.dev.invalid".to_string(),
             port: 3000,
             proxy_port: 1443,
+            wildcard_domain: Some("dev.invalid".to_string()),
         };
         let json = serde_json::to_vec(&msg).unwrap();
         let decoded: ExecIpcMessage = serde_json::from_slice(&json).unwrap();
@@ -432,10 +469,12 @@ mod tests {
                 hostname,
                 port,
                 proxy_port,
+                wildcard_domain,
             } => {
                 assert_eq!(hostname, "api.dev.invalid");
                 assert_eq!(port, 3000);
                 assert_eq!(proxy_port, 1443);
+                assert_eq!(wildcard_domain, Some("dev.invalid".to_string()));
             }
             _ => panic!("expected Ready"),
         }
@@ -491,8 +530,9 @@ mod tests {
     #[test]
     fn test_resolve_hostname_single_provider_single_wildcard() {
         let status = make_status(vec![make_provider("default", vec!["*.dev.invalid"])]);
-        let hostname = resolve_hostname(&status, "api", None, None).unwrap();
+        let (hostname, suffix) = resolve_hostname(&status, "api", None, None).unwrap();
         assert_eq!(hostname, "api.dev.invalid");
+        assert_eq!(suffix, "dev.invalid");
     }
 
     #[test]
@@ -501,8 +541,9 @@ mod tests {
             make_provider("alpha", vec!["*.alpha.invalid"]),
             make_provider("beta", vec!["*.beta.invalid"]),
         ]);
-        let hostname = resolve_hostname(&status, "app", Some("beta"), None).unwrap();
+        let (hostname, suffix) = resolve_hostname(&status, "app", Some("beta"), None).unwrap();
         assert_eq!(hostname, "app.beta.invalid");
+        assert_eq!(suffix, "beta.invalid");
     }
 
     #[test]
@@ -511,8 +552,9 @@ mod tests {
             "default",
             vec!["*.a.invalid", "*.b.invalid"],
         )]);
-        let hostname = resolve_hostname(&status, "app", None, Some("b.invalid")).unwrap();
+        let (hostname, suffix) = resolve_hostname(&status, "app", None, Some("b.invalid")).unwrap();
         assert_eq!(hostname, "app.b.invalid");
+        assert_eq!(suffix, "b.invalid");
     }
 
     #[test]
