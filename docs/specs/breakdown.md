@@ -9,17 +9,62 @@
 - **005: Provider Registry & Orchestration** — `trustless::provider` ([spec](005-provider-registry.md))
 - **006: Proxy Lifecycle & Control API** — `trustless::control`, `trustless proxy start/stop` ([spec](006-proxy-lifecycle.md))
 - **TLS server** — HTTPS listener, HTTP/2, TLS 1.2/1.3 configuration (`f701a51`)
-- **Proxy control API**
-- **`trustless exec`**
-- **AWS Lambda provider**
-- **GitHub Actions for releasing binaries and crates to crates.io**
-- `trustless run`
+- **Proxy control API** — `GET /ping`, `POST /stop`, `POST /reload`, `GET /status`
+- **`trustless exec`** — explicit subdomain, fork+sidecar, IPC, route guard
+- **`trustless run`** — auto-infer subdomain (`.trustless.json`, `package.json`, git root, cwd)
+- **Git worktree detection** — CLI + filesystem fallback, branch prefix, default branch skip
+- **Framework injection** — Vite, React Router, Astro, Angular, React Native, Expo
+- **`TRUSTLESS=0`/`TRUSTLESS=skip`** — bypass proxy entirely
+- **`TRUSTLESS_URL` env var** — set on exec/run
+- **AWS Lambda provider** — `trustless-backend-lambda`
+- **GitHub Actions** — releasing binaries and crates to crates.io
 
-### Fill the gap with Portless
+### Portless Feature Parity
 
 Our respected prior art, Portless, is checked out at `/home/sorah/git/github.com/vercel-labs/portless` and can be used as a reference for filling the gap in features and quality.
 
-#### Error responses & pages
+#### Feature comparison (Portless → Trustless)
+
+At parity:
+- Proxy routing (exact + wildcard subdomain) — done (SNI + Host header routing)
+- Port auto-assignment (ephemeral) — done
+- HTTP proxy with `X-Forwarded-*` headers — done (`X-Forwarded-For/Proto/Host`, `Forwarded`, `Via`)
+- WebSocket upgrade support — done
+- Loop detection (`X-Portless-Hops`, max 5) — done (`X-Trustless-Hops`, max 5)
+- Hop-by-hop header stripping (RFC 7230) — done
+- HTTP/2 + TLS — done (TLS 1.3 default, optional TLS 1.2)
+- Framework flag injection — done (same frameworks: Vite, React Router, Astro, Angular, React Native, Expo)
+- `PORTLESS=0`/`PORTLESS=skip` bypass — done (`TRUSTLESS=0`/`TRUSTLESS=skip`)
+- `PORTLESS_URL` env var — done (`TRUSTLESS_URL`)
+- Auto-start proxy on run/exec — done (daemon auto-start)
+- Git worktree branch prefix — done
+- Project name auto-detection — done (`.trustless.json`, `package.json`, git root, cwd)
+- `portless run` (auto-infer name) — done (`trustless run`)
+- `portless <name> <cmd>` (explicit name) — done (`trustless exec <name> <cmd>`)
+- Provider orchestration + crash recovery — done (exponential backoff, SIGTERM/SIGKILL)
+- File-based route storage with locking — done
+- Control API — done
+- `portless proxy start/stop` — done (`trustless proxy start/stop/reload`)
+- Graceful shutdown with drain — done (30s timeout)
+
+Partial or not yet implemented:
+- `portless list` (show active routes) — partial (`trustless status` shows routes)
+- `portless get <name>` (print URL for service) — **not implemented**
+- `portless alias <name> <port>` (static route) — partial (`trustless route add/remove` exists)
+- Styled HTML error pages (404, 502, 508) — **not implemented** (plain text only)
+- 404 page showing active routes as index — **not implemented**
+- Dark mode CSS for error pages — **not implemented**
+- Colored / formatted CLI output — **not implemented** (no color crate)
+
+N/A by design (Trustless uses remote signing with real domains instead of local CA + `.localhost`):
+- Named `.localhost` URLs — uses registrable domains (`*.dev.example.com`) instead
+- `portless trust` (add CA to system trust store)
+- `portless hosts sync/clean` (`/etc/hosts` management)
+- Local CA + per-hostname cert generation (SNI callback)
+
+#### Remaining work
+
+##### Error responses & pages
 
 - Error response body should end with `\n`
 - Fancy but minimal HTML pages for humans (detect `Accept: text/html`)
@@ -27,24 +72,16 @@ Our respected prior art, Portless, is checked out at `/home/sorah/git/github.com
   - 404 / unknown-host page showing active routes as an index
   - Dark mode, minimal styling (no external assets)
 
-#### CLI UX
+##### CLI UX
 
-- `trustless run` — auto-determine subdomain name, like `trustless exec` but without explicit name
-  - Git worktree branch prefix (compose as `<branch>.<project>`):
-    - Only when `git worktree list --porcelain` shows >1 worktree; fallback: detect `.git` file with `gitdir:` pointing to `/worktrees/` (rejects `/modules/` submodules)
-    - Skip prefixing for default branches (`main`, `master`) and detached HEAD
-    - For slashed branch names, use only the last segment (`feature/auth` → `auth`)
-    - Sanitise the branch segment with the same rules as project name
 - Colored / formatted CLI output (errors in red, URLs highlighted, etc.)
 - `trustless status` — show routes first, providers second (see Misc quality)
 
-#### Exec / run behaviour
+##### Service discovery
 
-- [x] `TRUSTLESS=0` / `TRUSTLESS=skip` — bypass proxy entirely, exec command directly without setting `PORT`/`HOST` or registering routes (useful for CI)
-- [x] Framework injection
-- Set a `TRUSTLESS_URL` env var with the full public URL (e.g. `https://api.dev.example.com:1443`)
+- `trustless get <name>` — print URL for a named service (for cross-service wiring, scripts)
 
-#### README
+##### README
 
 - README that sounds fancy
 
@@ -60,8 +97,6 @@ Our respected prior art, Portless, is checked out at `/home/sorah/git/github.com
 - secrecy on Message structs
 - [x] rename provider-lambda-function to backend-lambda
 - rename provider-filesystem to provider-filesystem
-- worktree detection
-  - `{{name}}--{{label}}`
 - `trustless get`
 - plain http `*.localhost` support
 
