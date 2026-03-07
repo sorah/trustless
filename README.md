@@ -99,6 +99,8 @@ trustless exec web next dev
 
 This is useful when the inferred name doesn't match what you want, or when you run multiple services from the same project directory.
 
+See [Routing and Running Apps](docs/routing.md) for full details on domain resolution, port allocation, environment variables, and route lifecycle.
+
 ## DNS Setup
 
 Configure your key provider to host a certificate for a dedicated dev domain (e.g. `*.dev.example.com`) and point its DNS records to `127.0.0.1` and `::1`.
