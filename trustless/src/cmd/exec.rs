@@ -66,6 +66,7 @@ cfg_if::cfg_if! {
             Ok(nix::unistd::pipe2(nix::fcntl::OFlag::O_CLOEXEC)?)
         }
     } else {
+        use std::os::fd::AsRawFd;
         fn make_pipe() -> anyhow::Result<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> {
             let (i, o) = nix::unistd::pipe()?;
             nix::fcntl::fcntl(i.as_raw_fd(), nix::fcntl::FcntlArg::F_SETFD(nix::fcntl::FdFlag::FD_CLOEXEC))?;
