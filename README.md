@@ -28,14 +28,18 @@ Trustless fixes this by sharing a publicly trusted certificate through a key pro
 
 ```mermaid
 flowchart TD
-    Browser["Browser\nhttps://api.dev.example.com:1443"]
-    Proxy["trustless proxy\n(TLS termination, port 1443)"]
-    Provider["Key Provider\n(signs TLS handshakes)"]
-    App1[":4123\napi"]
-    App2[":4567\nweb"]
+    Browser["Browser<br>https://api.dev.example.com:1443"]
+    Proxy["trustless proxy<br>(TLS termination, port 1443)"]
+    ProviderCmd["Provider Command<br>(local CLI)"]
+    ProviderServer["Provider Server<br>(e.g. Lambda function;<br>signs only, no key export)"]
+    Storage[("Key Storage<br>(e.g. S3)")]
+    App1[":4123<br>api"]
+    App2[":4567<br>web"]
 
     Browser -->|HTTPS| Proxy
-    Proxy -.->|sign requests| Provider
+    Proxy -.->|"sign request → signature"| ProviderCmd
+    ProviderCmd -.-> ProviderServer
+    ProviderServer --- Storage
     Proxy -->|HTTP| App1
     Proxy -->|HTTP| App2
 ```
