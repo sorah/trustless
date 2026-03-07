@@ -59,6 +59,62 @@ The module outputs `function_arn`.
 | `timeout` | no | `30` | Timeout in seconds |
 | `environment_variables` | no | `{}` | Additional environment variables (merged with module-managed ones; user values take precedence) |
 
+#### IAM Role
+
+The module requires an existing IAM role ARN. Here is an example role definition:
+
+```hcl
+resource "aws_iam_role" "trustless" {
+  name                 = "trustless"
+  description          = "Trustless key provider"
+  assume_role_policy   = data.aws_iam_policy_document.trustless_trust.json
+  max_session_duration = 3600
+}
+
+data "aws_iam_policy_document" "trustless_trust" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+  }
+}
+
+data "aws_iam_policy" "lambda_basic_execution" {
+  name = "AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "trustless_lambda" {
+  role       = aws_iam_role.trustless.name
+  policy_arn = data.aws_iam_policy.lambda_basic_execution.arn
+}
+
+resource "aws_iam_role_policy" "trustless" {
+  role   = aws_iam_role.trustless.name
+  policy = data.aws_iam_policy_document.trustless.json
+}
+
+data "aws_iam_policy_document" "trustless" {
+  # Include this statement if using encrypted keys with SSM passphrase
+  statement {
+    effect    = "Allow"
+    actions   = ["ssm:GetParameter"]
+    resources = [aws_ssm_parameter.passphrase.arn]
+  }
+
+  statement {
+    effect  = "Allow"
+    actions = ["s3:GetObject", "s3:ListBucket"]
+    resources = [
+      "arn:aws:s3:::my-bucket",
+      "arn:aws:s3:::my-bucket/certs/*",
+    ]
+  }
+}
+```
+
 ### S3 Object Structure
 
 Organize your certificate files under an S3 prefix. The layout is compatible with [acmesmith](https://github.com/sorah/acmesmith) S3 storage output. For each prefix (e.g. `s3://my-bucket/certs/`):
@@ -76,14 +132,6 @@ s3://my-bucket/certs/my-cert-2026-03/key.pem         # private key
 To rotate certificates, upload the new cert/key files under a new ID directory and update the `current` file. The Lambda function detects changes on the next `initialize` call.
 
 ## Setting Up the Provider Command
-
-### Install
-
-Build `trustless-provider-lambda` from this repository:
-
-```
-cargo install --path trustless-provider-lambda
-```
 
 ### Register with Trustless
 
@@ -114,6 +162,17 @@ trustless test-provider -- trustless-provider-lambda --function-name my-trustles
 **You are responsible for controlling who can invoke the Lambda function.** Anyone with `lambda:InvokeFunction` permission on the provider function can sign TLS handshakes for its domains -- effectively impersonating them.
 
 Grant `lambda:InvokeFunction` only to developers who need local HTTPS, and revoke it when they no longer need access. This is the primary access control mechanism: revoking IAM permission immediately cuts off signing ability without needing to rotate keys or certificates.
+
+```hcl
+# Example: policy to grant developers access to the provider function
+data "aws_iam_policy_document" "trustless_developer" {
+  statement {
+    effect    = "Allow"
+    actions   = ["lambda:InvokeFunction"]
+    resources = [module.trustless_provider.function_arn]
+  }
+}
+```
 
 ## How It Works
 
