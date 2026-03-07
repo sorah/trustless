@@ -12,8 +12,12 @@
 - **Proxy control API**
 - **`trustless exec`**
 - **AWS Lambda provider**
+- **GitHub Actions for releasing binaries and crates to crates.io**
+- `trustless run`
 
 ### Fill the gap with Portless
+
+Our respected prior art, Portless, is checked out at `/home/sorah/git/github.com/vercel-labs/portless` and can be used as a reference for filling the gap in features and quality.
 
 #### Error responses & pages
 
@@ -26,13 +30,6 @@
 #### CLI UX
 
 - `trustless run` — auto-determine subdomain name, like `trustless exec` but without explicit name
-  - Infer project name (in priority order):
-    1. `package.json` `name` field — walk up directory tree; strip `@scope/` prefix via `/^@[^/]+\//`
-    2. Git repo root directory basename — `git rev-parse --show-toplevel`, fallback to walking up for `.git`
-    3. Current working directory basename
-    - Error if all sources produce empty after sanitisation
-  - Sanitise inferred name to valid hostname label:
-    - Lowercase → replace `[^a-z0-9-]` with `-` → collapse consecutive `-` → trim leading/trailing `-`
   - Git worktree branch prefix (compose as `<branch>.<project>`):
     - Only when `git worktree list --porcelain` shows >1 worktree; fallback: detect `.git` file with `gitdir:` pointing to `/worktrees/` (rejects `/modules/` submodules)
     - Skip prefixing for default branches (`main`, `master`) and detached HEAD
@@ -43,8 +40,8 @@
 
 #### Exec / run behaviour
 
-- `TRUSTLESS=0` / `TRUSTLESS=skip` — bypass proxy entirely, exec command directly without setting `PORT`/`HOST` or registering routes (useful for CI)
-- Inject `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS` env var (set to the provider's wildcard domain) in `trustless exec` / `trustless run`
+- [x] `TRUSTLESS=0` / `TRUSTLESS=skip` — bypass proxy entirely, exec command directly without setting `PORT`/`HOST` or registering routes (useful for CI)
+- [x] Framework injection
 - Set a `TRUSTLESS_URL` env var with the full public URL (e.g. `https://api.dev.example.com:1443`)
 
 #### README
@@ -53,10 +50,18 @@
 
 ### Release Engineering
 
-- GitHub Actions for releasing binaries and crates to crates.io
 - Mimic Mairu's workflows
 
 ## Misc quality
 
 - cleanup meaningless tests
 - status must show routes first, providers later
+- hardening: limit blob
+- secrecy on Message structs
+- [x] rename provider-lambda-function to backend-lambda
+- rename provider-stub to provider-filesystem
+- worktree detection
+  - `{{name}}--{{label}}`
+- `trustless get`
+- plain http `*.localhost` support
+

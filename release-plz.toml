@@ -11,7 +11,7 @@ git_tag_enable = false
 git_release_enable = false
 
 [[package]]
-name = "trustless-provider-lambda-function"
+name = "trustless-backend-lambda"
 publish = false
 git_tag_enable = false
 git_release_enable = false

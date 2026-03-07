@@ -3,7 +3,7 @@
 The AWS Lambda provider lets you use TLS keys stored in Amazon S3 via a Lambda function, without running a persistent key server process. It consists of two components:
 
 - **`trustless-provider-lambda`** -- a provider command that relays the key provider protocol to Lambda invocations
-- **`trustless-provider-lambda-function`** -- the Lambda function that loads key material from S3 and performs signing
+- **`trustless-backend-lambda`** -- the Lambda function that loads key material from S3 and performs signing
 
 ## Deploying the Lambda Function
 
@@ -21,10 +21,10 @@ Use the provided Terraform module:
 
 ```hcl
 module "trustless_provider" {
-  source = "github.com/sorah/trustless//trustless-provider-lambda-function/terraform"
+  source = "github.com/sorah/trustless//trustless-backend-lambda/terraform"
 
   function_name = "my-trustless-provider"
-  source_url    = "https://github.com/sorah/trustless/releases/download/trustless-provider-lambda%2Fv0.1.0/trustless-provider-lambda-function.arm64.zip"
+  source_url    = "https://github.com/sorah/trustless/releases/download/trustless-provider-lambda%2Fv0.1.0/trustless-backend-lambda.arm64.zip"
   architecture  = "arm64"
 
   ### optional; SHA-512 of the base64-encoded zip content

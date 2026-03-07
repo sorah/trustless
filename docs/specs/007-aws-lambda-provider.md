@@ -72,10 +72,10 @@ Provide a Terraform module to deploy the Lambda function.
 
 ```hcl
 module "trustless-function" {
-    source = "github.com/sorah/trustless//trustless-provider-lambda-function/terraform"
+    source = "github.com/sorah/trustless//trustless-backend-lambda/terraform"
 
     function_name = "my-trustless-provider"
-    source_url    = "https://github.com/sorah/trustless/releases/download/v0.1.0/trustless-provider-lambda-function-x86_64.zip"
+    source_url    = "https://github.com/sorah/trustless/releases/download/v0.1.0/trustless-backend-lambda-x86_64.zip"
     source_sha512 = "..." # optional SHA-512 checksum
 
     iam_role_arn = aws_iam_role.trustless.arn
@@ -140,27 +140,27 @@ Outputs:
 
 Deliverables:
 
-- `Cargo.toml` (workspace root): add `trustless-provider-lambda` and `trustless-provider-lambda-function` to `members`
+- `Cargo.toml` (workspace root): add `trustless-provider-lambda` and `trustless-backend-lambda` to `members`
 - `trustless-protocol/Cargo.toml`: add `provider-helpers` feature flag with dependencies (`rustls-pki-types`, `x509-parser`, `aws-lc-rs` via rustls); add `encrypted-key` feature flag with dependencies (`pkcs8`, `aes`, `cbc`, `cipher`, `md-5`, `base64ct`) for encrypted private key decryption
 - `trustless-protocol/src/provider_helpers.rs` (or similar): shared cert loading, SAN extraction, scheme detection, and signing helpers with `thiserror`-based error type
 - `trustless-provider-stub/Cargo.toml`: update to use `trustless-protocol/provider-helpers` feature
 - `trustless-provider-stub/src/main.rs`: refactor to use shared helpers from `trustless-protocol`
 - `trustless-provider-lambda/Cargo.toml`: new crate with `clap`, `tokio`, `aws-sdk-lambda`, `trustless-protocol`
 - `trustless-provider-lambda/src/main.rs`: provider command implementation
-- `trustless-provider-lambda-function/Cargo.toml`: new crate with `lambda_runtime`, `aws-sdk-s3`, `aws-sdk-ssm`, `trustless-protocol` (with `provider-helpers` and `encrypted-key`), `secrecy`, `tracing`, `rustls-pki-types`
-- `trustless-provider-lambda-function/src/main.rs`: Lambda function implementation with S3 backend, in-memory cache, and signing
-- `trustless-provider-lambda-function/terraform/main.tf`: Terraform module for Lambda deployment
-- `trustless-provider-lambda-function/terraform/variables.tf`: module input variables
-- `trustless-provider-lambda-function/terraform/outputs.tf`: module outputs
-- `trustless-provider-lambda-function/terraform/versions.tf`: required Terraform and provider versions
+- `trustless-backend-lambda/Cargo.toml`: new crate with `lambda_runtime`, `aws-sdk-s3`, `aws-sdk-ssm`, `trustless-protocol` (with `provider-helpers` and `encrypted-key`), `secrecy`, `tracing`, `rustls-pki-types`
+- `trustless-backend-lambda/src/main.rs`: Lambda function implementation with S3 backend, in-memory cache, and signing
+- `trustless-backend-lambda/terraform/main.tf`: Terraform module for Lambda deployment
+- `trustless-backend-lambda/terraform/variables.tf`: module input variables
+- `trustless-backend-lambda/terraform/outputs.tf`: module outputs
+- `trustless-backend-lambda/terraform/versions.tf`: required Terraform and provider versions
 
 ## Implementation Plan
 
 ### Crate Structure
 
 - `//trustless-provider-lambda` — provider command binary crate. Implements the stdin/stdout key provider protocol, translating each request into a synchronous (`RequestResponse`) Lambda invocation via `aws-sdk-lambda`. Added to the workspace `members`.
-- `//trustless-provider-lambda-function` — AWS Lambda function binary crate. Handles `initialize` and `sign` requests using S3-backed key material. Initialized with `cargo lambda new`. Added to workspace `members`. Built via `cargo lambda build`.
-- `//trustless-provider-lambda-function/terraform` — Terraform module to deploy the Lambda function. Uses `http` data source to download the zip, writes to a local file via `local_file` resource, and references it with `aws_lambda_function.filename`.
+- `//trustless-backend-lambda` — AWS Lambda function binary crate. Handles `initialize` and `sign` requests using S3-backed key material. Initialized with `cargo lambda new`. Added to workspace `members`. Built via `cargo lambda build`.
+- `//trustless-backend-lambda/terraform` — Terraform module to deploy the Lambda function. Uses `http` data source to download the zip, writes to a local file via `local_file` resource, and references it with `aws_lambda_function.filename`.
 
 ### Shared Code in trustless-protocol
 
@@ -222,7 +222,7 @@ Validation complete. Implementation matches spec (after spec updates).
 - [x] Extract shared provider helpers into `trustless-protocol` behind `provider-helpers` feature flag
 - [x] Refactor `trustless-provider-stub` to use shared helpers
 - [x] Create `trustless-provider-lambda` crate (provider command)
-- [x] Create `trustless-provider-lambda-function` crate (Lambda function)
+- [x] Create `trustless-backend-lambda` crate (Lambda function)
 - [x] Implement S3 backend with caching, PKCS#8 decryption, signing
 - [x] Implement Lambda function handler (initialize + sign)
 - [x] Implement provider command (stdin/stdout protocol ↔ Lambda invocations)

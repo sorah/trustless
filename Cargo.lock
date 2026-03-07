@@ -3642,6 +3642,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "trustless-backend-lambda"
+version = "0.1.0"
+dependencies = [
+ "aws-config",
+ "aws-sdk-s3",
+ "aws-sdk-ssm",
+ "aws-smithy-mocks",
+ "aws-smithy-types",
+ "lambda_runtime",
+ "rcgen",
+ "rustls-pki-types",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "trustless-protocol",
+]
+
+[[package]]
 name = "trustless-protocol"
 version = "0.1.0"
 dependencies = [
@@ -3676,28 +3698,6 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "trustless-protocol",
-]
-
-[[package]]
-name = "trustless-provider-lambda-function"
-version = "0.1.0"
-dependencies = [
- "aws-config",
- "aws-sdk-s3",
- "aws-sdk-ssm",
- "aws-smithy-mocks",
- "aws-smithy-types",
- "lambda_runtime",
- "rcgen",
- "rustls-pki-types",
- "secrecy",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
  "tokio",
  "tracing",
  "tracing-subscriber",
