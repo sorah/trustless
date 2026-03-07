@@ -99,7 +99,7 @@ trustless test-provider [--profile=NAME]                    # Verify a provider 
 
 ## Prior Art
 
-Heavily inspired by [vercel-labs/portless](https://github.com/vercel-labs/portless). Portless gives each dev server a stable `.localhost` URL over HTTP. Trustless extends the idea to registrable domains over HTTPS, for cases where you need same-site cookies or secure context on real domains.
+Heavily inspired by [vercel-labs/portless](https://github.com/vercel-labs/portless). Portless makes port numbers unnecessary -- hence _port-less._ Trustless extends the idea to registrable domains over HTTPS, removing the need to trust self-signed certificates or local CAs -- hence _trust-less._ No trust store modifications required.
 
 ## State Directory
 
