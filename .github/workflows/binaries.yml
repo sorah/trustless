@@ -48,11 +48,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: cargo-bins/cargo-binstall@main
       - run: cargo binstall --no-confirm cargo-lambda
-      - run: cargo lambda build --release --arm64 -p trustless-provider-lambda-function
-      - name: upload lambda zip
-        run: |
-          cd target/lambda/bootstrap
-          zip trustless-provider-lambda-function.zip bootstrap
-          gh release upload "${{ github.ref_name }}" trustless-provider-lambda-function.zip
+      - run: cargo lambda build --release --arm64 --output-format zip -p trustless-provider-lambda-function
+      - run: gh release upload "${{ github.ref_name }}" target/lambda/bootstrap/bootstrap.zip --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
