@@ -3,9 +3,11 @@
 HTTPS on registrable domains for local development -- without touching your system trust store.
 
 ```
-trustless exec api rails server
-# -> https://api.developers.example.com:1443
+trustless run rails server
+# -> https://my-project.dev.example.com:1443
 ```
+
+Trustless infers a subdomain from your project (directory name, package.json, or `.trustless.json`), allocates an ephemeral port, and starts your app behind a local HTTPS proxy -- all with a single command.
 
 ## Why
 
@@ -28,13 +30,13 @@ Trustless fixes this by sharing a publicly trusted certificate through a key pro
 
 ```mermaid
 flowchart TD
-    Browser["Browser<br>https://api.dev.example.com:1443"]
+    Browser["Browser<br>https://my-api.dev.example.com:1443"]
     Proxy["trustless proxy<br>(TLS termination, port 1443)"]
     ProviderCmd["Provider Command<br>(local CLI)"]
     ProviderServer["Provider Server<br>(e.g. Lambda function;<br>signs only, no key export)"]
     Storage[("Key Storage<br>(e.g. S3)")]
-    App1[":4123<br>api"]
-    App2[":4567<br>web"]
+    App1[":4123<br>my-api"]
+    App2[":4567<br>my-frontend"]
 
     Browser -->|HTTPS| Proxy
     Proxy -.->|"sign request → signature"| ProviderCmd
@@ -46,7 +48,7 @@ flowchart TD
 
 1. **Key provider** -- You deploy a provider (e.g. AWS Lambda + S3) that holds a wildcard certificate for your dev domain. The provider signs TLS handshake data on request but never exports the private key.
 2. **Proxy** -- `trustless proxy` runs locally, terminates TLS using the provider for signing, and forwards plain HTTP to your app on loopback.
-3. **Exec** -- `trustless exec <name> <command>` assigns an ephemeral port, registers a route with the proxy, and starts your app with `PORT` and `HOST` set.
+3. **Run** -- `trustless run <command>` infers a subdomain, assigns an ephemeral port, registers a route with the proxy, and starts your app with `PORT` and `HOST` set.
 
 ## Quick Start
 
@@ -63,6 +65,31 @@ trustless setup -- trustless-provider-lambda --function-name my-key-provider
 ### 3. Run your app
 
 ```bash
+cd my-api && trustless run rails server
+# -> https://my-api.dev.example.com:1443
+
+cd my-frontend && trustless run next dev
+# -> https://my-frontend.dev.example.com:1443
+```
+
+The proxy auto-starts on first use. Start it explicitly with `trustless proxy start` if you prefer.
+
+### Subdomain inference
+
+`trustless run` picks a subdomain automatically:
+
+1. `.trustless.json` in the project (or any parent directory) -- set `{"name": "my-app"}` for a label, or `{"domain": "my-app.dev.example.com"}` for a full hostname
+2. `package.json` `name` field (with `@scope/` stripped)
+3. Git repository root directory name
+4. Current directory name
+
+All names are sanitized to valid DNS labels (lowercased, non-alphanumeric characters replaced with hyphens).
+
+### Explicit subdomain with `trustless exec`
+
+When you need a specific subdomain rather than the inferred one, use `trustless exec`:
+
+```bash
 trustless exec api rails server
 # -> https://api.dev.example.com:1443
 
@@ -70,7 +97,7 @@ trustless exec web next dev
 # -> https://web.dev.example.com:1443
 ```
 
-The proxy auto-starts when you run `trustless exec`. Start it explicitly with `trustless proxy start` if you prefer.
+This is useful when the inferred name doesn't match what you want, or when you run multiple services from the same project directory.
 
 ## DNS Setup
 
@@ -84,14 +111,15 @@ Use multiple profiles when you have more than one key provider:
 
 ```bash
 trustless setup --profile=another -- ...
-trustless exec --profile=another api rails server
+trustless run --profile=another rails server
 ```
 
 ## Commands
 
 ```bash
+trustless run [--profile=NAME] <command...>                 # Run app (auto-infer subdomain)
+trustless exec <subdomain> [--profile=NAME] <command...>    # Run app (explicit subdomain)
 trustless setup [--profile=NAME] -- <provider-command...>   # Save a provider to a profile
-trustless exec <name> [--profile=NAME] <command...>         # Run app behind the HTTPS proxy
 trustless proxy start                                       # Start the proxy
 trustless proxy stop                                        # Stop a running proxy
 trustless proxy reload                                      # Reload provider configuration
