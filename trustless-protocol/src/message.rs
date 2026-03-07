@@ -63,12 +63,38 @@ pub enum Response {
     Error(ErrorResponse),
 }
 
+impl From<SuccessResponse> for Response {
+    fn from(s: SuccessResponse) -> Self {
+        Response::Success(s)
+    }
+}
+
+impl From<ErrorResponse> for Response {
+    fn from(e: ErrorResponse) -> Self {
+        Response::Error(e)
+    }
+}
+
 impl Response {
     pub fn id(&self) -> u64 {
         match self {
             Response::Success(SuccessResponse::Initialize { id, .. }) => *id,
             Response::Success(SuccessResponse::Sign { id, .. }) => *id,
             Response::Error(ErrorResponse { id, .. }) => *id,
+        }
+    }
+
+    pub fn initialize(id: u64, result: Result<InitializeResult, ErrorPayload>) -> Self {
+        match result {
+            Ok(result) => SuccessResponse::Initialize { id, result }.into(),
+            Err(error) => ErrorResponse { id, error }.into(),
+        }
+    }
+
+    pub fn sign(id: u64, result: Result<SignResult, ErrorPayload>) -> Self {
+        match result {
+            Ok(result) => SuccessResponse::Sign { id, result }.into(),
+            Err(error) => ErrorResponse { id, error }.into(),
         }
     }
 }

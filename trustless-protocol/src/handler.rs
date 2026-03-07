@@ -39,28 +39,14 @@ pub async fn run(handler: impl Handler) -> Result<(), crate::error::Error> {
 
         let id = request.id();
 
-        let response =
-            match request {
-                crate::message::Request::Initialize { .. } => match handler.initialize().await {
-                    Ok(result) => crate::message::Response::Success(
-                        crate::message::SuccessResponse::Initialize { id, result },
-                    ),
-                    Err(error) => {
-                        crate::message::Response::Error(crate::message::ErrorResponse { id, error })
-                    }
-                },
-                crate::message::Request::Sign { params, .. } => match handler.sign(params).await {
-                    Ok(result) => {
-                        crate::message::Response::Success(crate::message::SuccessResponse::Sign {
-                            id,
-                            result,
-                        })
-                    }
-                    Err(error) => {
-                        crate::message::Response::Error(crate::message::ErrorResponse { id, error })
-                    }
-                },
-            };
+        let response = match request {
+            crate::message::Request::Initialize { .. } => {
+                crate::message::Response::initialize(id, handler.initialize().await)
+            }
+            crate::message::Request::Sign { params, .. } => {
+                crate::message::Response::sign(id, handler.sign(params).await)
+            }
+        };
 
         crate::codec::send_message(&mut writer, &response).await?;
     }

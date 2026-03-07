@@ -59,21 +59,14 @@ async fn handler_round_trip() {
             let response = match request {
                 trustless_protocol::message::Request::Initialize { .. } => {
                     use trustless_protocol::handler::Handler as _;
-                    let result = TestHandler.initialize().await.unwrap();
-                    trustless_protocol::message::Response::Success(
-                        trustless_protocol::message::SuccessResponse::Initialize { id, result },
+                    trustless_protocol::message::Response::initialize(
+                        id,
+                        TestHandler.initialize().await,
                     )
                 }
                 trustless_protocol::message::Request::Sign { params, .. } => {
                     use trustless_protocol::handler::Handler as _;
-                    match TestHandler.sign(params).await {
-                        Ok(result) => trustless_protocol::message::Response::Success(
-                            trustless_protocol::message::SuccessResponse::Sign { id, result },
-                        ),
-                        Err(error) => trustless_protocol::message::Response::Error(
-                            trustless_protocol::message::ErrorResponse { id, error },
-                        ),
-                    }
+                    trustless_protocol::message::Response::sign(id, TestHandler.sign(params).await)
                 }
             };
 

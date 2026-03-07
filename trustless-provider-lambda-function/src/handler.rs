@@ -14,30 +14,16 @@ pub(crate) async fn handle(
 
     let response = match request {
         trustless_protocol::message::Request::Initialize { .. } => {
-            match state.do_initialize().await {
-                Ok(result) => trustless_protocol::message::Response::Success(
-                    trustless_protocol::message::SuccessResponse::Initialize { id, result },
-                ),
-                Err(e) => trustless_protocol::message::Response::Error(
-                    trustless_protocol::message::ErrorResponse {
-                        id,
-                        error: e.into(),
-                    },
-                ),
-            }
+            trustless_protocol::message::Response::initialize(
+                id,
+                state.do_initialize().await.map_err(Into::into),
+            )
         }
         trustless_protocol::message::Request::Sign { params, .. } => {
-            match state.do_sign(&params).await {
-                Ok(result) => trustless_protocol::message::Response::Success(
-                    trustless_protocol::message::SuccessResponse::Sign { id, result },
-                ),
-                Err(e) => trustless_protocol::message::Response::Error(
-                    trustless_protocol::message::ErrorResponse {
-                        id,
-                        error: e.into(),
-                    },
-                ),
-            }
+            trustless_protocol::message::Response::sign(
+                id,
+                state.do_sign(&params).await.map_err(Into::into),
+            )
         }
     };
 
