@@ -3,6 +3,7 @@ name = "trustless-provider-lambda-function"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
+publish = false
 
 [[bin]]
 name = "bootstrap"

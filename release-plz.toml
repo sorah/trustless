@@ -1,0 +1,15 @@
+[workspace]
+git_tag_name = "{{ package }}/v{{ version }}"
+git_release_draft = true
+
+[[package]]
+name = "trustless-provider-stub"
+publish = false
+git_tag_enable = false
+git_release_enable = false
+
+[[package]]
+name = "trustless-provider-lambda-function"
+publish = false
+git_tag_enable = false
+git_release_enable = false
