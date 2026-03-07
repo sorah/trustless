@@ -26,10 +26,10 @@ fn stub_provider_binary() -> std::path::PathBuf {
     path.pop(); // remove the test binary name
     path.pop(); // remove "deps"
     // Now at target/{<target>/}debug/
-    path.push("trustless-provider-stub");
+    path.push("trustless-provider-filesystem");
     if !path.exists() {
         let mut cmd = std::process::Command::new(env!("CARGO"));
-        cmd.args(["build", "-p", "trustless-provider-stub"]);
+        cmd.args(["build", "-p", "trustless-provider-filesystem"]);
         // Detect --target from exe path: if the grandparent of "debug" isn't "target", there's a
         // target triple component in the path (e.g. target/<triple>/debug/deps/<exe>).
         let components: Vec<_> = exe.components().collect();
@@ -47,7 +47,7 @@ fn stub_provider_binary() -> std::path::PathBuf {
         let status = cmd.status().expect("failed to run cargo build");
         assert!(
             status.success(),
-            "cargo build -p trustless-provider-stub failed"
+            "cargo build -p trustless-provider-filesystem failed"
         );
     }
     path

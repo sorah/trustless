@@ -3,7 +3,6 @@ See docs/internals.md for internal details
 ## We're at early development stage
 
 - Mimic `portless` behaviour but keep things minimal
-  - We intentionally omit certain behaviours such as wildcard or auto-subdomain naming from README.md. During this phase, focus on what explained in our README.
 
 ## Rust coding guideline
 
@@ -23,7 +22,7 @@ See docs/internals.md for internal details
 
 - `trustless` for CLI and proxy server
 - `trustless-protocol` for protocol utilities
-- `trustless-provider-stub` for testing and example key provider implementation. Refer to given static certificate directory for looking up keys
+- `trustless-provider-filesystem` for testing and example key provider implementation. Refer to given static certificate directory for looking up keys
   - Use `/home/sorah/tmp/lo` for example certificate registry directory.
 
 ## Referencing library code

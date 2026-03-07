@@ -3689,6 +3689,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "trustless-provider-filesystem"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "rcgen",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "trustless-protocol",
+]
+
+[[package]]
 name = "trustless-provider-lambda"
 version = "0.1.0"
 dependencies = [
@@ -3698,21 +3713,6 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "trustless-protocol",
-]
-
-[[package]]
-name = "trustless-provider-stub"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "rcgen",
- "tempfile",
- "thiserror 2.0.18",
  "tokio",
  "tracing",
  "tracing-subscriber",

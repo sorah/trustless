@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - extract host from URI authority for HTTP/2
 - add tracing to proxy runtime gaps
 - validate provider responds to initialize before saving profile
-- signer test: auto-build trustless-provider-stub
+- signer test: auto-build trustless-provider-filesystem
 - remove top-level `use` for structs and enums
 - use aws-lc-rs instead of ring for rustls
 - reduce dependency footprint

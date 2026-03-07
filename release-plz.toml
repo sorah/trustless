@@ -5,12 +5,6 @@ release_always = false
 publish_no_verify = true
 
 [[package]]
-name = "trustless-provider-stub"
-publish = false
-git_tag_enable = false
-git_release_enable = false
-
-[[package]]
 name = "trustless-backend-lambda"
 publish = false
 git_tag_enable = false

@@ -7,6 +7,7 @@ on:
   push:
     tags:
       - 'trustless/v[0-9]+*'
+      - 'trustless-provider-filesystem/v[0-9]+*'
       - 'trustless-provider-lambda/v[0-9]+*'
 
 env:

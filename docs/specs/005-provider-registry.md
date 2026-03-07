@@ -240,7 +240,7 @@ The orchestrator pushes errors into the registry when:
 **Integration tests** in `trustless/tests/`:
 
 - Existing `signer.rs` tests updated for `ProviderProcess::spawn()` API change
-- `ProviderProcess::spawn()` starts provider-stub, `initialize()` succeeds, `sign()` works
+- `ProviderProcess::spawn()` starts provider-filesystem, `initialize()` succeeds, `sign()` works
 
 No integration test for the full orchestrator restart loop — orchestrator is covered by unit tests with mocks.
 
@@ -287,7 +287,7 @@ Implementors MUST keep this section updated as they work.
   - [x] Add `libc` to `trustless/Cargo.toml` and `trustless-protocol/Cargo.toml` (for SIGTERM)
 - [x] **Integration tests** (`trustless/tests/`):
   - [x] Update `signer.rs` tests for `ProviderProcess::spawn()` API
-  - [x] Verify ProviderProcess spawn + initialize + sign with provider-stub
+  - [x] Verify ProviderProcess spawn + initialize + sign with provider-filesystem
 - [x] **Example** (`trustless/examples/tls_server.rs`):
   - [x] Update to use `ProviderOrchestrator` API
 - [x] `cargo clippy --workspace` passes
@@ -304,4 +304,4 @@ Implementors MUST keep this section updated as they work.
 - **SigningHandle**: Added `disconnected()` constructor for tests/placeholder entries.
 - **Dependencies**: Added `tokio-util` (0.7) and `libc` (0.2) to trustless crate; added `libc` (0.2) to trustless-protocol crate.
 - **Tests**: All existing tests updated for ProviderProcess API. New unit tests: `replace_provider_swaps_atomically`, `error_fifo_respects_capacity`, `error_entry_fields`, `provider_state_tracking`, `backoff_calculation`.
-- **Note**: Unit tests for ProviderOrchestrator with mocked ProviderProcess are deferred — the orchestrator's supervisor loop directly calls `ProviderProcess::spawn()` which is hard to mock without trait abstraction. The orchestrator is covered by the integration tests via real provider-stub processes.
+- **Note**: Unit tests for ProviderOrchestrator with mocked ProviderProcess are deferred — the orchestrator's supervisor loop directly calls `ProviderProcess::spawn()` which is hard to mock without trait abstraction. The orchestrator is covered by the integration tests via real provider-filesystem processes.

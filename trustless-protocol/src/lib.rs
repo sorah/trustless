@@ -8,7 +8,7 @@
 //! # For key provider implementors
 //!
 //! Implement the [`handler::Handler`] trait and call [`handler::run`] to start
-//! the event loop. See `trustless-provider-stub` for a complete example.
+//! the event loop. See `trustless-provider-filesystem` for a complete example.
 //!
 //! # For proxy internals
 //!

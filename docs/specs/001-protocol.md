@@ -2,7 +2,7 @@
 
 ## Summary
 
-Implement the key provider protocol library (`trustless-protocol` crate) and a stub provider (`trustless-provider-stub` crate) that exercises it. This bootstraps the Cargo workspace and establishes the foundation for Trustless proxy to communicate with external key providers over stdin/stdout.
+Implement the key provider protocol library (`trustless-protocol` crate) and a stub provider (`trustless-provider-filesystem` crate) that exercises it. This bootstraps the Cargo workspace and establishes the foundation for Trustless proxy to communicate with external key providers over stdin/stdout.
 
 ## Motivation
 
@@ -54,7 +54,7 @@ trustless_protocol::handler::run(my_handler).await?;
 ### Stub Provider CLI
 
 ```
-trustless-provider-stub --cert-dir /path/to/cert-registry
+trustless-provider-filesystem --cert-dir /path/to/cert-registry
 ```
 
 The cert directory follows Acmesmith's layout:
@@ -109,7 +109,7 @@ Considered having the proxy tell the provider which signature scheme to use. Omi
 
 ### Expected Outcomes
 
-- Cargo workspace with three crates: `trustless`, `trustless-protocol`, `trustless-provider-stub`
+- Cargo workspace with three crates: `trustless`, `trustless-protocol`, `trustless-provider-filesystem`
 - Working protocol library with client and handler APIs
 - Working stub provider that serves certificates from an Acmesmith-style directory
 - End-to-end example (`provider_client`) demonstrating spawn → initialize → sign
@@ -131,8 +131,8 @@ trustless-protocol/src/message.rs
 trustless-protocol/src/codec.rs
 trustless-protocol/src/client.rs
 trustless-protocol/src/handler.rs
-trustless-provider-stub/Cargo.toml
-trustless-provider-stub/src/main.rs
+trustless-provider-filesystem/Cargo.toml
+trustless-provider-filesystem/src/main.rs
 ```
 
 ### trustless-protocol internals
@@ -160,7 +160,7 @@ trustless-provider-stub/src/main.rs
 
 **Handler** (`handler.rs`): The `Handler` trait has two async methods (`initialize`, `sign`). The `run()` function reads requests from stdin in a loop, dispatches to the handler, and writes responses to stdout. EOF on stdin terminates the loop cleanly.
 
-### trustless-provider-stub internals
+### trustless-provider-filesystem internals
 
 Scans `cert_dir/certs/*/` directories sorted by name. For each:
 
@@ -188,7 +188,7 @@ Implementation complete.
 
 - [x] Workspace `Cargo.toml`
 - [x] `trustless-protocol`: error, message, codec, client, handler modules
-- [x] `trustless-provider-stub`: cert directory scanning, signing via rustls
+- [x] `trustless-provider-filesystem`: cert directory scanning, signing via rustls
 - [x] `trustless` crate skeleton with `provider_client` example
 - [x] `cargo clippy --workspace` passes
 - [x] End-to-end test: spawn stub → initialize → sign (verified with real Let's Encrypt cert)

@@ -176,7 +176,7 @@ The `run` function reads requests from stdin, dispatches to your `Handler`, and 
 
 ### Reference Implementation
 
-See `trustless-provider-stub` for a complete working example that loads certificates and keys from a directory on disk and performs signing using `rustls::crypto::aws_lc_rs`.
+See `trustless-provider-filesystem` for a complete working example that loads certificates and keys from a directory on disk and performs signing using `rustls::crypto::aws_lc_rs`.
 
 ## Implementing in Other Languages
 

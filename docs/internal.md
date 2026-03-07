@@ -4,7 +4,7 @@
 
 - **`trustless`** — CLI and proxy server
 - **`trustless-protocol`** — Protocol types, codec, handler trait, and client for the key provider protocol
-- **`trustless-provider-stub`** — Reference key provider implementation backed by static certificate files on disk
+- **`trustless-provider-filesystem`** — Reference key provider implementation backed by static certificate files on disk
 
 ## Dependencies
 

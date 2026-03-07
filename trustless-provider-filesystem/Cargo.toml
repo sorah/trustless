@@ -1,9 +1,11 @@
 [package]
-name = "trustless-provider-stub"
+name = "trustless-provider-filesystem"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-publish = false
+description = "Filesystem-based key provider for trustless"
+homepage = "https://github.com/sorah/trustless"
+repository = "https://github.com/sorah/trustless"
 
 [dependencies]
 trustless-protocol = { workspace = true, features = ["provider-helpers", "encrypted-key"] }

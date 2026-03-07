@@ -2,7 +2,7 @@
 
 ## Done
 
-- **001: Protocol & Stub Provider** — `trustless-protocol`, `trustless-provider-stub` ([spec](001-protocol.md))
+- **001: Protocol & Stub Provider** — `trustless-protocol`, `trustless-provider-filesystem` ([spec](001-protocol.md))
 - **002: Config & State Directories** — `trustless::config`, `trustless setup` ([spec](002-config.md))
 - **003: Remote Signer** — `trustless::signer` ([spec](003-remote-signer.md))
 - **004: Proxy Service** — `trustless::proxy`, `trustless::route`, `trustless route` ([spec](004-proxy-service.md))
@@ -59,7 +59,7 @@ Our respected prior art, Portless, is checked out at `/home/sorah/git/github.com
 - hardening: limit blob
 - secrecy on Message structs
 - [x] rename provider-lambda-function to backend-lambda
-- rename provider-stub to provider-filesystem
+- rename provider-filesystem to provider-filesystem
 - worktree detection
   - `{{name}}--{{label}}`
 - `trustless get`

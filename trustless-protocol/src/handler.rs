@@ -1,7 +1,7 @@
 /// Trait for implementing a key provider.
 ///
 /// Implement this trait and pass it to [`run`] to start the provider event loop.
-/// See `trustless-provider-stub` for a complete example.
+/// See `trustless-provider-filesystem` for a complete example.
 pub trait Handler: Send + Sync {
     /// Handle an `initialize` request. Return all available certificates.
     fn initialize(

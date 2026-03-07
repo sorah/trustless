@@ -64,7 +64,7 @@ The SSM passphrase (if configured) is also cached in memory on first use, protec
 
 #### Signing
 
-The Lambda function loads private keys from PEM into memory and signs locally using `rustls::crypto::aws_lc_rs`, the same approach as `trustless-provider-stub`. KMS-based signing is out of scope.
+The Lambda function loads private keys from PEM into memory and signs locally using `rustls::crypto::aws_lc_rs`, the same approach as `trustless-provider-filesystem`. KMS-based signing is out of scope.
 
 ### Terraform module
 
@@ -118,7 +118,7 @@ Outputs:
 
 - **Terraform module creating IAM role vs requiring it.** The module could generate scoped-down IAM policies from the S3 URLs, but this adds complexity (parsing S3 URLs in HCL, handling edge cases). Requiring the user to supply `iam_role_arn` keeps the module focused on Lambda deployment and gives users full control over IAM.
 
-- **Shared code in trustless-protocol vs duplication.** The Lambda function and provider-stub share cert loading, SAN extraction, and signing logic. We chose to extract these into `trustless-protocol` behind a feature flag rather than duplicate, since the logic is non-trivial and keeping it in sync across crates would be error-prone.
+- **Shared code in trustless-protocol vs duplication.** The Lambda function and provider-filesystem share cert loading, SAN extraction, and signing logic. We chose to extract these into `trustless-protocol` behind a feature flag rather than duplicate, since the logic is non-trivial and keeping it in sync across crates would be error-prone.
 
 - **Cert ID from S3: bare ID vs prefixed.** Certificate IDs could include the S3 URL to guarantee uniqueness, but this would leak infrastructure details into the protocol. Using the bare `current` file content keeps IDs clean and user-controlled, with a documented requirement that IDs be unique across prefixes.
 
@@ -143,8 +143,8 @@ Deliverables:
 - `Cargo.toml` (workspace root): add `trustless-provider-lambda` and `trustless-backend-lambda` to `members`
 - `trustless-protocol/Cargo.toml`: add `provider-helpers` feature flag with dependencies (`rustls-pki-types`, `x509-parser`, `aws-lc-rs` via rustls); add `encrypted-key` feature flag with dependencies (`pkcs8`, `aes`, `cbc`, `cipher`, `md-5`, `base64ct`) for encrypted private key decryption
 - `trustless-protocol/src/provider_helpers.rs` (or similar): shared cert loading, SAN extraction, scheme detection, and signing helpers with `thiserror`-based error type
-- `trustless-provider-stub/Cargo.toml`: update to use `trustless-protocol/provider-helpers` feature
-- `trustless-provider-stub/src/main.rs`: refactor to use shared helpers from `trustless-protocol`
+- `trustless-provider-filesystem/Cargo.toml`: update to use `trustless-protocol/provider-helpers` feature
+- `trustless-provider-filesystem/src/main.rs`: refactor to use shared helpers from `trustless-protocol`
 - `trustless-provider-lambda/Cargo.toml`: new crate with `clap`, `tokio`, `aws-sdk-lambda`, `trustless-protocol`
 - `trustless-provider-lambda/src/main.rs`: provider command implementation
 - `trustless-backend-lambda/Cargo.toml`: new crate with `lambda_runtime`, `aws-sdk-s3`, `aws-sdk-ssm`, `trustless-protocol` (with `provider-helpers` and `encrypted-key`), `secrecy`, `tracing`, `rustls-pki-types`
@@ -164,7 +164,7 @@ Deliverables:
 
 ### Shared Code in trustless-protocol
 
-Extract cert loading and signing helpers from `trustless-provider-stub` into `trustless-protocol` so both `trustless-provider-stub` and the Lambda function can reuse them:
+Extract cert loading and signing helpers from `trustless-provider-filesystem` into `trustless-protocol` so both `trustless-provider-filesystem` and the Lambda function can reuse them:
 - PEM parsing (fullchain + key)
 - DNS SAN extraction from leaf certificate
 - Supported scheme detection via `rustls::sign::SigningKey::choose_scheme`
@@ -189,7 +189,7 @@ The shared code is gated behind a `provider-helpers` feature flag in `trustless-
 - Use `aws-sdk-s3`, `aws-sdk-ssm`, and the Rust Runtime for AWS Lambda (`lambda_runtime` crate)
 - Encrypted key decryption (PKCS#8 and legacy OpenSSL) provided by `trustless-protocol`'s `encrypted-key` feature flag
 - Use `secrecy` crate for passphrase protection in memory
-- Signing via `rustls` (aws-lc-rs backend) through `trustless-protocol`'s `provider-helpers` feature, same as `trustless-provider-stub`
+- Signing via `rustls` (aws-lc-rs backend) through `trustless-protocol`'s `provider-helpers` feature, same as `trustless-provider-filesystem`
 - Use `tracing` and `tracing-subscriber` for structured logging to CloudWatch (via stdout)
   - `info`: initialize/sign requests, cache state transitions
   - `debug`: cache hits, S3 fetch details
@@ -220,7 +220,7 @@ Validation complete. Implementation matches spec (after spec updates).
 ### Implementation Checklist
 
 - [x] Extract shared provider helpers into `trustless-protocol` behind `provider-helpers` feature flag
-- [x] Refactor `trustless-provider-stub` to use shared helpers
+- [x] Refactor `trustless-provider-filesystem` to use shared helpers
 - [x] Create `trustless-provider-lambda` crate (provider command)
 - [x] Create `trustless-backend-lambda` crate (Lambda function)
 - [x] Implement S3 backend with caching, PKCS#8 decryption, signing

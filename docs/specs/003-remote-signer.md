@@ -188,7 +188,7 @@ This requires changes in `trustless-protocol`:
 - Add a `scheme` module with `parse_scheme(name: &str) -> Option<SignatureScheme>` and `scheme_to_string(scheme: SignatureScheme) -> &'static str` mappings
 - Add `algorithm_for_schemes(schemes: &[SignatureScheme]) -> Option<SignatureAlgorithm>` helper
 
-Update `trustless-provider-stub` to populate `schemes` based on the key type (same logic it already uses in `choose_scheme`).
+Update `trustless-provider-filesystem` to populate `schemes` based on the key type (same logic it already uses in `choose_scheme`).
 
 Rationale: the provider knows its key capabilities best. Parsing SPKI from the certificate works but duplicates key-type knowledge. Explicit schemes allow future providers to advertise only the schemes they actually support (e.g., an HSM that only supports RSA-PSS but not PKCS1).
 
@@ -230,7 +230,7 @@ A minimal TLS server that accepts connections and responds with a fixed HTTP 200
 
 **Integration test** in `trustless/tests/signer.rs`:
 
-- Spawn `trustless-provider-stub` → `initialize()` → build `CertResolver` → verify resolution for known SNI names
+- Spawn `trustless-provider-filesystem` → `initialize()` → build `CertResolver` → verify resolution for known SNI names
 - Full TLS handshake: create a `rustls::ServerConfig` with `CertResolver`, accept a connection from a `rustls` client, verify the handshake completes and data can be exchanged
 
 ## Current Status
@@ -244,7 +244,7 @@ Validation complete. Implementation matches spec.
   - [x] Add `schemes: Vec<String>` to `CertificateInfo` in `message.rs`
   - [x] Add `scheme` module with `parse_scheme` / `scheme_to_string` / `algorithm_for_schemes` helpers
   - [x] Unit tests for scheme parsing round-trips
-- [x] **Stub provider update** (`trustless-provider-stub`):
+- [x] **Stub provider update** (`trustless-provider-filesystem`):
   - [x] Populate `schemes` field in `CertificateInfo` based on key type
 - [x] **Protocol documentation**:
   - [x] Update `docs/key-provider-protocol.md` with `schemes` field in initialize response

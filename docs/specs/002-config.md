@@ -12,7 +12,7 @@ A profile stores the command line used to launch a key provider. Profiles live a
 
 ```json
 {
-  "command": ["cargo", "run", "-p", "trustless-provider-stub", "--", "--cert-dir", "/path/to/certs"]
+  "command": ["cargo", "run", "-p", "trustless-provider-filesystem", "--", "--cert-dir", "/path/to/certs"]
 }
 ```
 
