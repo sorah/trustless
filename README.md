@@ -19,12 +19,7 @@ Tools like [Portless](https://github.com/vercel-labs/portless) solve the port-nu
 
 Trustless fixes this by sharing a publicly trusted certificate through a key provider you deploy once, then every developer on the team gets HTTPS on registrable domains with zero local trust store changes.
 
-> [!CAUTION]
-> **You are sharing a private key.** Anyone with access to the key provider can sign TLS handshakes -- which means they can impersonate the domain. Signing is the most important operation of an asymmetric key, and sharing it is inherently risky.
->
-> This architecture reduces abuse risk compared to distributing raw key files: access to signing can be revoked instantly by removing provider access, and the key itself is never exported. But while someone has access, they can fully impersonate the domain.
->
-> To limit the blast radius: **use a dedicated domain exclusively for local development** (e.g. `*.lo.mycompany-dev.com`). Never reuse certificates or domains that serve real traffic.
+__It's noteworthy that sharing a private key is risky!__ But we tolerate by minimizing its risk. By having a key provider in between a locally running HTTPS proxy and actual key materials, we can instantly revoke access when needed.
 
 ## How It Works
 
@@ -54,15 +49,23 @@ flowchart TD
 
 ### 1. Deploy a key provider
 
-See [AWS Lambda Provider](docs/lambda-provider.md) for a ready-made provider, or [Writing a Key Provider](docs/writing-key-provider.md) to build your own.
+See [AWS Lambda Provider](docs/lambda-provider.md) for a ready-made provider using Lambda and S3, or [Writing a Key Provider](docs/writing-key-provider.md) to build your own.
 
-### 2. Configure trustless
+### 2. Setup DNS
+
+Configure your wildcard domain (e.g. `*.dev.example.com`) to point to `127.0.0.1` and `::1` via DNS. Trustless does not alter DNS resolution on the machine in any way.
+
+Choose a domain isolated from staging, production, and other in-house tools. Anyone with access to the key provider can sign TLS handshakes for its domains.
+
+### 3. Configure trustless
 
 ```bash
 trustless setup -- trustless-provider-lambda --function-name my-key-provider
 ```
 
-### 3. Run your app
+Key providers are specified as an arbitrary command line, so you can use any provider implementation.
+
+### 4. Run your app
 
 ```bash
 cd my-api && trustless run rails server
@@ -74,16 +77,20 @@ cd my-frontend && trustless run next dev
 
 The proxy auto-starts on first use. Start it explicitly with `trustless proxy start` if you prefer.
 
+## Security Notice
+
+> [!CAUTION]
+> **You are sharing a private key.** Anyone with access to the key provider can sign TLS handshakes -- which means they can impersonate the domain. Signing is the most important operation of an asymmetric key, and sharing it is inherently risky.
+>
+> This architecture reduces abuse risk compared to distributing raw key files: access to signing can be revoked instantly by removing provider access, and the key itself is never exported. But while someone has access, they can fully impersonate the domain.
+>
+> To limit the blast radius: **use a dedicated domain exclusively for local development** (e.g. `*.lo.mycompany-dev.com`). Never reuse certificates or domains that serve real traffic.
+
+## Routing
+
 ### Subdomain inference
 
-`trustless run` picks a subdomain automatically:
-
-1. `.trustless.json` in the project (or any parent directory) -- set `{"name": "my-app"}` for a label, or `{"domain": "my-app.dev.example.com"}` for a full hostname
-2. `package.json` `name` field (with `@scope/` stripped)
-3. Git repository root directory name
-4. Current directory name
-
-All names are sanitized to valid DNS labels (lowercased, non-alphanumeric characters replaced with hyphens).
+`trustless run` infers a subdomain automatically: `.trustless.json`, `package.json` (name) in the project, Git repository name, or current directory name.
 
 ### Explicit subdomain with `trustless exec`
 
@@ -97,15 +104,13 @@ trustless exec web next dev
 # -> https://web.dev.example.com:1443
 ```
 
-This is useful when the inferred name doesn't match what you want, or when you run multiple services from the same project directory.
+When a provider has multiple wildcard domains, use `--domain` to select one:
+
+```bash
+trustless exec api --domain=staging.example.com rails server
+```
 
 See [Routing and Running Apps](docs/routing.md) for full details on domain resolution, port allocation, environment variables, and route lifecycle.
-
-## DNS Setup
-
-Configure your key provider to host a certificate for a dedicated dev domain (e.g. `*.dev.example.com`) and point its DNS records to `127.0.0.1` and `::1`.
-
-Keep this domain isolated from staging and production. Anyone with access to the key provider can sign TLS handshakes for its domains -- you don't want that overlapping with real infrastructure.
 
 ## Profiles
 
