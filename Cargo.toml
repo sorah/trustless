@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["trustless", "trustless-protocol", "trustless-provider-filesystem", "trustless-provider-lambda", "trustless-backend-lambda"]
+members = ["trustless", "trustless-protocol", "trustless-provider-failure", "trustless-provider-filesystem", "trustless-provider-lambda", "trustless-backend-lambda"]
 
 [workspace.dependencies]
 trustless-protocol = { version = "0.1.0", path = "trustless-protocol" }

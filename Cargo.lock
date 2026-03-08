@@ -3767,6 +3767,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "trustless-provider-failure"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "trustless",
+ "trustless-protocol",
+]
+
+[[package]]
 name = "trustless-provider-filesystem"
 version = "0.1.0"
 dependencies = [
