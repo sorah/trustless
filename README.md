@@ -17,7 +17,7 @@ Tools like [Portless](https://github.com/vercel-labs/portless) solve the port-nu
 - **Secure context requires HTTPS with trusted certificates.** Browsers grant secure context to plain `localhost`, but once you use a registrable domain, you need a real TLS certificate
 - **Self-signed certs need trust store changes.** Installing a local CA means modifying system or browser trust stores on every developer's machine and poses security risks if not handled carefully.
 
-Trustless fixes this by sharing a publicly trusted certificate through a key provider you deploy once, then every developer on the team gets HTTPS on registrable domains with zero local trust store changes.
+Trustless fixes this by sharing a publicly trusted certificate through a key provider you deploy once, then every developer on the team gets HTTPS on registrable domains with zero local trust store changes. The key provider exposes only a signing interface; private keys are never distributed.
 
 __It's noteworthy that sharing a private key is risky!__ We tolerate by minimizing its risk. By having a key provider in between a locally running HTTPS proxy and actual key materials, we can instantly revoke access when needed.
 
