@@ -90,15 +90,15 @@ Once a subdomain label is determined (by either `run` or `exec`), it needs to be
 If the proxy has a single provider, it is used automatically. With multiple providers, the first provider is used by default; use `--profile` to choose a different one:
 
 ```bash
-trustless run --profile=prod-certs rails server
-trustless exec --profile=prod-certs api rails server
+trustless run --profile=alternative rails server
+trustless exec --profile=alternative api rails server
 ```
 
 The profile can also be set via the `TRUSTLESS_PROFILE` environment variable.
 
 ### Domain selection (`--domain`)
 
-If the selected provider's certificate covers a single wildcard domain (e.g. `*.dev.example.com`), it is used automatically. When a certificate covers multiple wildcard domains, you must pick one:
+If the selected provider's certificate covers a single wildcard domain (e.g. `*.dev.example.com`), it is used automatically. When a certificate covers multiple wildcard domains, the first one is used by default. Use `--domain` to pick a specific one:
 
 ```bash
 trustless run --domain=staging.example.com rails server
@@ -109,7 +109,7 @@ trustless exec --domain=staging.example.com api rails server
 
 1. **One provider, one wildcard** -- everything is automatic: `trustless run rails server` → `<label>.dev.example.com`
 2. **Multiple providers** -- `--profile` required (or `TRUSTLESS_PROFILE`)
-3. **Multiple wildcard domains on the selected provider** -- when the subdomain contains multiple labels (e.g. `branch.myapp` from worktree detection), the best-matching wildcard is auto-selected by label overlap. A suffix whose leading labels match trailing labels of the subdomain is preferred. When no unambiguous match exists, `--domain` is required.
+3. **Multiple wildcard domains on the selected provider** -- when the subdomain contains multiple labels (e.g. `branch.myapp` from worktree detection), the best-matching wildcard is auto-selected by label overlap. A suffix whose leading labels match trailing labels of the subdomain is preferred. When no unambiguous match exists, the first wildcard domain is used. Use `--domain` to override.
 4. **No wildcard domains** -- error (non-wildcard certificates can't generate subdomain hostnames)
 
 These rules apply identically to both `run` and `exec`.

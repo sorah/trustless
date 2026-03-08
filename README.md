@@ -106,7 +106,7 @@ trustless exec web next dev
 # -> https://web.dev.example.com:1443
 ```
 
-When a provider has multiple wildcard domains, use `--domain` to select one:
+When a provider has multiple wildcard domains, the first one is used by default. Use `--domain` to pick a specific one:
 
 ```bash
 trustless exec api --domain=staging.example.com rails server

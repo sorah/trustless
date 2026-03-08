@@ -86,7 +86,8 @@ impl HostnameSpec {
 }
 
 pub fn validate_hostname(host: &str) -> Result<(), RouteError> {
-    if host.eq_ignore_ascii_case("trustless") {
+    let lower = host.to_ascii_lowercase();
+    if lower == "trustless" || lower.starts_with("trustless.") {
         return Err(RouteError::ReservedHostname(host.to_string()));
     }
     if host.is_empty() {
@@ -331,11 +332,7 @@ pub(crate) fn resolve_hostname(
             } else if let Some(best) = find_best_wildcard_suffix(subdomain, &wildcard_domains) {
                 best
             } else {
-                anyhow::bail!(
-                    "multiple wildcard domains in provider '{}'; use --domain to select one: {}",
-                    provider.name,
-                    wildcard_domains.join(", ")
-                );
+                wildcard_domains[0]
             }
         }
     };
@@ -461,13 +458,14 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_hostname_ambiguous_domains() {
+    fn test_resolve_hostname_ambiguous_domains_picks_first() {
         let status = make_status(vec![make_provider(
             "default",
             vec!["*.a.invalid", "*.b.invalid"],
         )]);
-        let err = resolve_hostname(&status, "app", None, None).unwrap_err();
-        assert!(err.to_string().contains("--domain"));
+        let (host, suffix) = resolve_hostname(&status, "app", None, None).unwrap();
+        assert_eq!(host, "app.a.invalid");
+        assert_eq!(suffix, "a.invalid");
     }
 
     #[test]
