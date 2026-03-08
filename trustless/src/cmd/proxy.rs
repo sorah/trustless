@@ -114,6 +114,7 @@ async fn run_start_async(args: &ProxyStartArgs) -> anyhow::Result<()> {
     let route_table = crate::route::RouteTable::new(crate::config::state_dir());
     let proxy_state = crate::proxy::ProxyState {
         route_table: route_table.clone(),
+        registry: registry.clone(),
         client: reqwest::Client::new(),
     };
     let proxy_app = crate::proxy::proxy_router(proxy_state);

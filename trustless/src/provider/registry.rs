@@ -231,6 +231,22 @@ impl ProviderRegistry {
             .collect()
     }
 
+    /// Count total unique wildcard domain suffixes across all providers.
+    pub fn wildcard_domain_count(&self) -> usize {
+        let inner = self.inner.read().unwrap();
+        let mut seen = std::collections::HashSet::new();
+        for entry in inner.providers.values() {
+            for cert in &entry.certificates {
+                for domain in &cert.domains {
+                    if let Some(suffix) = domain.strip_prefix("*.") {
+                        seen.insert(suffix.to_owned());
+                    }
+                }
+            }
+        }
+        seen.len()
+    }
+
     pub fn provider_names(&self) -> Vec<String> {
         let inner = self.inner.read().unwrap();
         inner.providers.keys().cloned().collect()

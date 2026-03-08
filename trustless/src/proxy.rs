@@ -43,6 +43,7 @@ struct ErrorResponse {
     error: ProxyError,
     accepts_html: bool,
     routes: Option<std::collections::HashMap<String, crate::route::RouteEntry>>,
+    needs_domain: bool,
 }
 
 impl axum::response::IntoResponse for ErrorResponse {
@@ -53,7 +54,7 @@ impl axum::response::IntoResponse for ErrorResponse {
             let body = match &self.error {
                 ProxyError::NoRoute(host) => {
                     let routes = self.routes.as_ref().cloned().unwrap_or_default();
-                    crate::error_page::render_404_text(host, &routes)
+                    crate::error_page::render_404_text(host, &routes, self.needs_domain)
                 }
                 ProxyError::LoopDetected { .. } => {
                     format!(
@@ -69,7 +70,7 @@ impl axum::response::IntoResponse for ErrorResponse {
         let html = match &self.error {
             ProxyError::NoRoute(host) => {
                 let routes = self.routes.as_ref().cloned().unwrap_or_default();
-                crate::error_page::render_404_page(host, &routes)
+                crate::error_page::render_404_page(host, &routes, self.needs_domain)
             }
             ProxyError::BackendConnect { backend, .. } => {
                 crate::error_page::render_502_page(*backend, "is not responding")
@@ -117,6 +118,7 @@ pub struct ClientAddr(pub std::net::SocketAddr);
 #[derive(Clone)]
 pub struct ProxyState {
     pub route_table: crate::route::RouteTable,
+    pub registry: crate::provider::ProviderRegistry,
     pub client: reqwest::Client,
 }
 
@@ -143,15 +145,20 @@ async fn proxy_handler(
     let wants_html = accepts_html(req.headers());
     let route_table = state.route_table.clone();
 
+    let registry = state.registry.clone();
     let mk_err = move |error: ProxyError| {
-        let routes = match &error {
-            ProxyError::NoRoute(_) => route_table.list_routes().ok(),
-            _ => None,
+        let (routes, needs_domain) = match &error {
+            ProxyError::NoRoute(_) => (
+                route_table.list_routes().ok(),
+                registry.wildcard_domain_count() > 1,
+            ),
+            _ => (None, false),
         };
         ErrorResponse {
             error,
             accepts_html: wants_html,
             routes,
+            needs_domain,
         }
     };
 
@@ -677,6 +684,7 @@ mod tests {
 
         let state = ProxyState {
             route_table,
+            registry: crate::provider::ProviderRegistry::new(),
             client: reqwest::Client::new(),
         };
         let app =

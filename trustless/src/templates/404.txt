@@ -8,4 +8,6 @@ Active apps:
 {% endif %}
 
 To register an app:
-  $ trustless run your-command
+  $ trustless exec {{ name }} your-command
+{% if needs_domain %}  $ trustless exec {{ name }} --domain={{ domain }} your-command
+{% endif %}

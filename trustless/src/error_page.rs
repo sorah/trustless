@@ -26,16 +26,27 @@ fn sorted_routes(
         .collect()
 }
 
+/// Split a hostname into `(subdomain, domain_suffix)` at the first dot.
+/// Returns `None` if there is no dot (single-label hostname).
+fn split_host(host: &str) -> Option<(&str, &str)> {
+    host.split_once('.')
+}
+
 pub fn render_404_page(
     host: &str,
     routes: &std::collections::HashMap<String, crate::route::RouteEntry>,
+    needs_domain: bool,
 ) -> String {
+    let (name, domain) = split_host(host).unwrap_or((host, ""));
     let env = engine();
     let tmpl = env.get_template("404.html").unwrap();
     tmpl.render(minijinja::context! {
         status => 404,
         status_text => "Not Found",
         host => host,
+        name => name,
+        domain => domain,
+        needs_domain => needs_domain,
         routes => sorted_routes(routes),
         arrow_svg => minijinja::Value::from_safe_string(ARROW_SVG.to_string()),
     })
@@ -45,11 +56,16 @@ pub fn render_404_page(
 pub fn render_404_text(
     host: &str,
     routes: &std::collections::HashMap<String, crate::route::RouteEntry>,
+    needs_domain: bool,
 ) -> String {
+    let (name, domain) = split_host(host).unwrap_or((host, ""));
     let env = engine();
     let tmpl = env.get_template("404.txt").unwrap();
     tmpl.render(minijinja::context! {
         host => host,
+        name => name,
+        domain => domain,
+        needs_domain => needs_domain,
         routes => sorted_routes(routes),
     })
     .expect("render 404.txt")
@@ -212,14 +228,26 @@ mod tests {
     #[test]
     fn test_render_404_page_no_routes() {
         let routes = std::collections::HashMap::new();
-        let html = render_404_page("unknown.host", &routes);
+        let html = render_404_page("unknown.dev.example.com", &routes, false);
         assert!(html.contains("<!DOCTYPE html>"));
         assert!(html.contains("404"));
         assert!(html.contains("Not Found"));
-        assert!(html.contains("unknown.host"));
+        assert!(html.contains("unknown.dev.example.com"));
         assert!(html.contains("No apps running."));
         assert!(html.contains("prefers-color-scheme: dark"));
-        assert!(html.contains("trustless run your-command"));
+        assert!(html.contains("trustless exec unknown your-command"));
+        assert!(
+            !html.contains("--domain="),
+            "single-domain setup should not show --domain"
+        );
+    }
+
+    #[test]
+    fn test_render_404_page_needs_domain() {
+        let routes = std::collections::HashMap::new();
+        let html = render_404_page("unknown.dev.example.com", &routes, true);
+        assert!(html.contains("trustless exec unknown your-command"));
+        assert!(html.contains("--domain=dev.example.com"));
     }
 
     #[test]
@@ -232,7 +260,7 @@ mod tests {
                 name: None,
             },
         );
-        let html = render_404_page("unknown.host", &routes);
+        let html = render_404_page("unknown.lo.dev", &routes, false);
         assert!(html.contains("Active apps"));
         assert!(html.contains("app.lo.dev"));
         assert!(html.contains("127.0.0.1:3000"));
@@ -249,7 +277,7 @@ mod tests {
     #[test]
     fn test_render_404_page_escapes_host() {
         let routes = std::collections::HashMap::new();
-        let html = render_404_page("<img src=x onerror=steal()>", &routes);
+        let html = render_404_page("<img src=x onerror=steal()>", &routes, false);
         assert!(
             !html.contains("<img"),
             "user-supplied HTML tags must be escaped"
@@ -260,10 +288,22 @@ mod tests {
     #[test]
     fn test_render_404_text_no_routes() {
         let routes = std::collections::HashMap::new();
-        let text = render_404_text("unknown.host", &routes);
-        assert!(text.contains("no route for host: unknown.host"));
-        assert!(text.contains("trustless run your-command"));
+        let text = render_404_text("unknown.dev.example.com", &routes, false);
+        assert!(text.contains("no route for host: unknown.dev.example.com"));
+        assert!(text.contains("trustless exec unknown your-command"));
+        assert!(
+            !text.contains("--domain="),
+            "single-domain setup should not show --domain"
+        );
         assert!(!text.contains("Active apps"));
+    }
+
+    #[test]
+    fn test_render_404_text_needs_domain() {
+        let routes = std::collections::HashMap::new();
+        let text = render_404_text("unknown.dev.example.com", &routes, true);
+        assert!(text.contains("trustless exec unknown your-command"));
+        assert!(text.contains("--domain=dev.example.com"));
     }
 
     #[test]
@@ -276,10 +316,10 @@ mod tests {
                 name: None,
             },
         );
-        let text = render_404_text("unknown.host", &routes);
+        let text = render_404_text("unknown.lo.dev", &routes, false);
         assert!(text.contains("Active apps:"));
         assert!(text.contains("app.lo.dev -> 127.0.0.1:3000"));
-        assert!(text.contains("trustless run your-command"));
+        assert!(text.contains("trustless exec unknown your-command"));
     }
 
     #[test]
@@ -305,7 +345,7 @@ mod tests {
     #[test]
     fn test_dark_mode_css_present() {
         let routes = std::collections::HashMap::new();
-        let html = render_404_page("x", &routes);
+        let html = render_404_page("x.example.com", &routes, false);
         assert!(html.contains("prefers-color-scheme: dark"));
         assert!(html.contains("--bg: #000"));
     }
@@ -313,14 +353,14 @@ mod tests {
     #[test]
     fn test_heading_layout() {
         let routes = std::collections::HashMap::new();
-        let html = render_404_page("x", &routes);
+        let html = render_404_page("x.example.com", &routes, false);
         assert!(html.contains(r#"<span class="status">404</span><h1>Not Found</h1>"#));
     }
 
     #[test]
     fn test_footer_link() {
         let routes = std::collections::HashMap::new();
-        let html = render_404_page("x", &routes);
+        let html = render_404_page("x.example.com", &routes, false);
         assert!(html.contains("Powered by"));
         assert!(html.contains("sorah/trustless"));
     }

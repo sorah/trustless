@@ -26,6 +26,7 @@ fn main() -> anyhow::Result<()> {
     let client = reqwest::Client::new();
     let state = trustless::proxy::ProxyState {
         route_table,
+        registry: trustless::provider::ProviderRegistry::new(),
         client,
     };
     let app = trustless::proxy::proxy_router(state);

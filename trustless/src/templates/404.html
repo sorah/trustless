@@ -15,6 +15,7 @@
 {% endif %}
 <div class="section">
   <p class="label">To register an app</p>
-  <div class="terminal"><span class="prompt">$ </span>trustless run your-command</div>
+  <div class="terminal"><span class="prompt">$ </span>trustless exec {{ name }} your-command</div>
+  {% if needs_domain %}<div class="terminal"><span class="prompt">$ </span>trustless exec {{ name }} --domain={{ domain }} your-command</div>{% endif %}
 </div>
 {% endblock %}

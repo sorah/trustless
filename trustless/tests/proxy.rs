@@ -17,6 +17,7 @@ async fn start_proxy(
     let client = reqwest::Client::new();
     let state = trustless::proxy::ProxyState {
         route_table,
+        registry: trustless::provider::ProviderRegistry::new(),
         client,
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -78,7 +79,7 @@ async fn test_no_route_returns_404() {
         "plain text body: {body}"
     );
     assert!(
-        body.contains("trustless run"),
+        body.contains("trustless exec"),
         "should include usage hint: {body}"
     );
 }
