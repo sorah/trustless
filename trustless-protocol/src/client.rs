@@ -50,10 +50,7 @@ where
                 Err(crate::error::Error::UnexpectedResponseMethod)
             }
             crate::message::Response::Error(crate::message::ErrorResponse { error, .. }) => {
-                Err(crate::error::Error::Provider {
-                    code: error.code,
-                    message: error.message,
-                })
+                Err(error.into())
             }
         }
     }
@@ -87,10 +84,7 @@ where
                 Err(crate::error::Error::UnexpectedResponseMethod)
             }
             crate::message::Response::Error(crate::message::ErrorResponse { error, .. }) => {
-                Err(crate::error::Error::Provider {
-                    code: error.code,
-                    message: error.message,
-                })
+                Err(error.into())
             }
         }
     }

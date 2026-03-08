@@ -13,14 +13,11 @@ pub(crate) enum AppError {
     Provider(#[from] trustless_protocol::provider_helpers::ProviderHelperError),
 }
 
-impl From<AppError> for trustless_protocol::message::ErrorPayload {
+impl From<AppError> for trustless_protocol::message::ErrorCode {
     fn from(e: AppError) -> Self {
         match e {
             AppError::Provider(pe) => pe.into(),
-            other => trustless_protocol::message::ErrorPayload {
-                code: -1,
-                message: other.to_string(),
-            },
+            other => trustless_protocol::message::ErrorCode::Internal(other.to_string()),
         }
     }
 }

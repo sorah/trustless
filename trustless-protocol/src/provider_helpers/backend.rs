@@ -5,9 +5,9 @@
 pub trait CertificateSource: Send + Sync {
     /// Identifies a certificate source (e.g. an S3 prefix, a filesystem directory).
     type SourceId: Sync;
-    /// Error type. Must convert into [`crate::message::ErrorPayload`] for protocol responses,
+    /// Error type. Must convert into [`crate::message::ErrorCode`] for protocol responses,
     /// and from [`super::ProviderHelperError`] for signing errors propagated by [`CachingBackend`].
-    type Error: Into<crate::message::ErrorPayload> + From<super::ProviderHelperError>;
+    type Error: Into<crate::message::ErrorCode> + From<super::ProviderHelperError>;
 
     /// Ordered list of certificate sources. The first entry determines the default certificate.
     fn sources(&self) -> &[Self::SourceId];
@@ -178,14 +178,14 @@ impl<S: CertificateSource> CachingBackend<S> {
 impl<S: CertificateSource> crate::handler::Handler for CachingBackend<S> {
     async fn initialize(
         &self,
-    ) -> Result<crate::message::InitializeResult, crate::message::ErrorPayload> {
+    ) -> Result<crate::message::InitializeResult, crate::message::ErrorCode> {
         self.initialize().await.map_err(Into::into)
     }
 
     async fn sign(
         &self,
         params: crate::message::SignParams,
-    ) -> Result<crate::message::SignResult, crate::message::ErrorPayload> {
+    ) -> Result<crate::message::SignResult, crate::message::ErrorCode> {
         self.sign(&params).await.map_err(Into::into)
     }
 }
@@ -208,14 +208,11 @@ mod tests {
         Source(String),
     }
 
-    impl From<MockError> for crate::message::ErrorPayload {
+    impl From<MockError> for crate::message::ErrorCode {
         fn from(e: MockError) -> Self {
             match e {
                 MockError::Provider(pe) => pe.into(),
-                other => crate::message::ErrorPayload {
-                    code: -1,
-                    message: other.to_string(),
-                },
+                other => crate::message::ErrorCode::Internal(other.to_string()),
             }
         }
     }
@@ -398,8 +395,11 @@ mod tests {
             .await
             .unwrap_err();
 
-        let payload: crate::message::ErrorPayload = err.into();
-        assert_eq!(payload.code, 1);
+        let code: crate::message::ErrorCode = err.into();
+        assert!(matches!(
+            code,
+            crate::message::ErrorCode::CertificateNotFound(_)
+        ));
     }
 
     #[tokio::test]

@@ -33,16 +33,20 @@ pub enum ProviderHelperError {
     KeyDecryption(String),
 }
 
-impl From<ProviderHelperError> for crate::message::ErrorPayload {
+impl From<ProviderHelperError> for crate::message::ErrorCode {
     fn from(e: ProviderHelperError) -> Self {
-        let (code, message) = match &e {
-            ProviderHelperError::CertificateNotFound(_) => (1, e.to_string()),
-            ProviderHelperError::UnsupportedScheme(_) => (2, e.to_string()),
-            ProviderHelperError::SigningFailed(_) => (3, e.to_string()),
-            ProviderHelperError::KeyDecryption(_) => (3, e.to_string()),
-            _ => (3, e.to_string()),
-        };
-        crate::message::ErrorPayload { code, message }
+        match e {
+            ProviderHelperError::CertificateNotFound(m) => {
+                crate::message::ErrorCode::CertificateNotFound(m)
+            }
+            ProviderHelperError::UnsupportedScheme(m) => {
+                crate::message::ErrorCode::UnsupportedScheme(m)
+            }
+            ProviderHelperError::SigningFailed(m) | ProviderHelperError::KeyDecryption(m) => {
+                crate::message::ErrorCode::SigningFailed(m)
+            }
+            other => crate::message::ErrorCode::SigningFailed(other.to_string()),
+        }
     }
 }
 
@@ -51,17 +55,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn error_to_error_payload_codes() {
-        let cert_err: crate::message::ErrorPayload =
+    fn error_to_error_code() {
+        let cert_err: crate::message::ErrorCode =
             ProviderHelperError::CertificateNotFound("x".to_owned()).into();
-        assert_eq!(cert_err.code, 1);
+        assert!(matches!(
+            cert_err,
+            crate::message::ErrorCode::CertificateNotFound(_)
+        ));
 
-        let scheme_err: crate::message::ErrorPayload =
+        let scheme_err: crate::message::ErrorCode =
             ProviderHelperError::UnsupportedScheme("x".to_owned()).into();
-        assert_eq!(scheme_err.code, 2);
+        assert!(matches!(
+            scheme_err,
+            crate::message::ErrorCode::UnsupportedScheme(_)
+        ));
 
-        let sign_err: crate::message::ErrorPayload =
+        let sign_err: crate::message::ErrorCode =
             ProviderHelperError::SigningFailed("x".to_owned()).into();
-        assert_eq!(sign_err.code, 3);
+        assert!(matches!(
+            sign_err,
+            crate::message::ErrorCode::SigningFailed(_)
+        ));
     }
 }

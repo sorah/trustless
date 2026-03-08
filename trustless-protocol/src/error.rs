@@ -10,8 +10,8 @@ pub enum Error {
     Json(#[from] serde_json::Error),
 
     /// The provider returned an error response.
-    #[error("provider error (code={code}): {message}")]
-    Provider { code: i64, message: String },
+    #[error(transparent)]
+    Provider(#[from] crate::message::ErrorCode),
 
     /// The response ID did not match the request ID.
     #[error("unexpected response id: expected {expected}, got {got}")]
@@ -24,4 +24,10 @@ pub enum Error {
     /// The provider process exited (stdin/stdout reached EOF).
     #[error("provider process exited unexpectedly")]
     ProcessExited,
+}
+
+impl From<crate::message::ErrorPayload> for Error {
+    fn from(p: crate::message::ErrorPayload) -> Self {
+        Error::Provider(crate::message::ErrorCode::from(p))
+    }
 }

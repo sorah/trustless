@@ -7,14 +7,11 @@ enum StubError {
     Io(#[from] std::io::Error),
 }
 
-impl From<StubError> for trustless_protocol::message::ErrorPayload {
+impl From<StubError> for trustless_protocol::message::ErrorCode {
     fn from(e: StubError) -> Self {
         match e {
             StubError::Provider(pe) => pe.into(),
-            other => trustless_protocol::message::ErrorPayload {
-                code: -1,
-                message: other.to_string(),
-            },
+            other => trustless_protocol::message::ErrorCode::Internal(other.to_string()),
         }
     }
 }

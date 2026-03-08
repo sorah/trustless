@@ -3,10 +3,8 @@ struct TestHandler;
 impl trustless_protocol::handler::Handler for TestHandler {
     async fn initialize(
         &self,
-    ) -> Result<
-        trustless_protocol::message::InitializeResult,
-        trustless_protocol::message::ErrorPayload,
-    > {
+    ) -> Result<trustless_protocol::message::InitializeResult, trustless_protocol::message::ErrorCode>
+    {
         Ok(trustless_protocol::message::InitializeResult {
             default: "test/v1".to_owned(),
             certificates: vec![trustless_protocol::message::CertificateInfo {
@@ -21,17 +19,16 @@ impl trustless_protocol::handler::Handler for TestHandler {
     async fn sign(
         &self,
         params: trustless_protocol::message::SignParams,
-    ) -> Result<trustless_protocol::message::SignResult, trustless_protocol::message::ErrorPayload>
+    ) -> Result<trustless_protocol::message::SignResult, trustless_protocol::message::ErrorCode>
     {
         if params.certificate_id == "test/v1" {
             let mut sig = params.blob.clone();
             sig.reverse();
             Ok(trustless_protocol::message::SignResult { signature: sig })
         } else {
-            Err(trustless_protocol::message::ErrorPayload {
-                code: 1,
-                message: format!("unknown cert: {}", params.certificate_id),
-            })
+            Err(trustless_protocol::message::ErrorCode::CertificateNotFound(
+                format!("unknown cert: {}", params.certificate_id),
+            ))
         }
     }
 }
@@ -61,12 +58,21 @@ async fn handler_round_trip() {
                     use trustless_protocol::handler::Handler as _;
                     trustless_protocol::message::Response::initialize(
                         id,
-                        TestHandler.initialize().await,
+                        TestHandler
+                            .initialize()
+                            .await
+                            .map_err(trustless_protocol::message::ErrorPayload::from),
                     )
                 }
                 trustless_protocol::message::Request::Sign { params, .. } => {
                     use trustless_protocol::handler::Handler as _;
-                    trustless_protocol::message::Response::sign(id, TestHandler.sign(params).await)
+                    trustless_protocol::message::Response::sign(
+                        id,
+                        TestHandler
+                            .sign(params)
+                            .await
+                            .map_err(trustless_protocol::message::ErrorPayload::from),
+                    )
                 }
             };
 

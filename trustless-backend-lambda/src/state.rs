@@ -442,8 +442,11 @@ mod tests {
             .await
             .unwrap_err();
 
-        let payload: trustless_protocol::message::ErrorPayload = err.into();
-        assert_eq!(payload.code, 1);
+        let code: trustless_protocol::message::ErrorCode = err.into();
+        assert!(matches!(
+            code,
+            trustless_protocol::message::ErrorCode::CertificateNotFound(_)
+        ));
     }
 
     #[tokio::test]
@@ -484,8 +487,11 @@ mod tests {
             .await
             .unwrap_err();
 
-        let payload: trustless_protocol::message::ErrorPayload = err.into();
-        assert_eq!(payload.code, 2);
+        let code: trustless_protocol::message::ErrorCode = err.into();
+        assert!(matches!(
+            code,
+            trustless_protocol::message::ErrorCode::UnsupportedScheme(_)
+        ));
     }
 
     #[tokio::test]

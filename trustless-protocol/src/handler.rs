@@ -7,7 +7,7 @@ pub trait Handler: Send + Sync {
     fn initialize(
         &self,
     ) -> impl std::future::Future<
-        Output = Result<crate::message::InitializeResult, crate::message::ErrorPayload>,
+        Output = Result<crate::message::InitializeResult, crate::message::ErrorCode>,
     > + Send;
 
     /// Handle a `sign` request. Sign the blob using the specified certificate and scheme.
@@ -15,7 +15,7 @@ pub trait Handler: Send + Sync {
         &self,
         params: crate::message::SignParams,
     ) -> impl std::future::Future<
-        Output = Result<crate::message::SignResult, crate::message::ErrorPayload>,
+        Output = Result<crate::message::SignResult, crate::message::ErrorCode>,
     > + Send;
 }
 
@@ -40,12 +40,20 @@ pub async fn run(handler: impl Handler) -> Result<(), crate::error::Error> {
         let id = request.id();
 
         let response = match request {
-            crate::message::Request::Initialize { .. } => {
-                crate::message::Response::initialize(id, handler.initialize().await)
-            }
-            crate::message::Request::Sign { params, .. } => {
-                crate::message::Response::sign(id, handler.sign(params).await)
-            }
+            crate::message::Request::Initialize { .. } => crate::message::Response::initialize(
+                id,
+                handler
+                    .initialize()
+                    .await
+                    .map_err(crate::message::ErrorPayload::from),
+            ),
+            crate::message::Request::Sign { params, .. } => crate::message::Response::sign(
+                id,
+                handler
+                    .sign(params)
+                    .await
+                    .map_err(crate::message::ErrorPayload::from),
+            ),
         };
 
         crate::codec::send_message(&mut writer, &response).await?;

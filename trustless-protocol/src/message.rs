@@ -1,5 +1,69 @@
 use serde_with::serde_as;
 
+/// Protocol error code with message.
+///
+/// Well-known codes from the key-provider protocol:
+/// - `-1`: internal/infrastructure error
+/// - `1`: certificate not found
+/// - `2`: unsupported signature scheme
+/// - `3`: signing failed
+///
+/// Providers may define additional codes via `Other`.
+#[derive(Debug, thiserror::Error)]
+pub enum ErrorCode {
+    /// Internal/infrastructure error (`-1`).
+    #[error("internal error: {0}")]
+    Internal(String),
+    /// Certificate not found (`1`).
+    #[error("certificate not found: {0}")]
+    CertificateNotFound(String),
+    /// Unsupported signature scheme (`2`).
+    #[error("unsupported scheme: {0}")]
+    UnsupportedScheme(String),
+    /// Signing failed (`3`).
+    #[error("signing failed: {0}")]
+    SigningFailed(String),
+    /// A provider-defined code not covered by the well-known variants.
+    #[error("error (code {code}): {message}")]
+    Other { code: i64, message: String },
+}
+
+impl ErrorCode {
+    pub fn as_i64(&self) -> i64 {
+        match self {
+            ErrorCode::Internal(_) => -1,
+            ErrorCode::CertificateNotFound(_) => 1,
+            ErrorCode::UnsupportedScheme(_) => 2,
+            ErrorCode::SigningFailed(_) => 3,
+            ErrorCode::Other { code, .. } => *code,
+        }
+    }
+}
+
+impl From<ErrorCode> for ErrorPayload {
+    fn from(e: ErrorCode) -> Self {
+        ErrorPayload {
+            code: e.as_i64(),
+            message: e.to_string(),
+        }
+    }
+}
+
+impl From<ErrorPayload> for ErrorCode {
+    fn from(p: ErrorPayload) -> Self {
+        match p.code {
+            -1 => ErrorCode::Internal(p.message),
+            1 => ErrorCode::CertificateNotFound(p.message),
+            2 => ErrorCode::UnsupportedScheme(p.message),
+            3 => ErrorCode::SigningFailed(p.message),
+            code => ErrorCode::Other {
+                code,
+                message: p.message,
+            },
+        }
+    }
+}
+
 /// A protocol request message.
 ///
 /// Internally tagged by `method`, with `id` repeated in each variant.
@@ -100,9 +164,12 @@ impl Response {
 }
 
 /// An error payload with a numeric code and human-readable message.
+///
+/// This is the wire-format struct. Use [`ErrorCode`] for typed error handling,
+/// and convert via `From`/`Into` at boundaries.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct ErrorPayload {
-    /// Error code. Conventional values: 1 = cert not found, 2 = unsupported scheme, 3 = signing failed.
+    /// Numeric error code. See [`ErrorCode`] for well-known values.
     pub code: i64,
     /// Human-readable error description.
     pub message: String,
@@ -323,5 +390,75 @@ mod tests {
         let json = serde_json::to_string(&params).unwrap();
         let decoded: super::SignParams = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.blob, params.blob);
+    }
+
+    #[test]
+    fn error_code_as_i64() {
+        assert_eq!(super::ErrorCode::Internal("x".to_owned()).as_i64(), -1);
+        assert_eq!(
+            super::ErrorCode::CertificateNotFound("x".to_owned()).as_i64(),
+            1
+        );
+        assert_eq!(
+            super::ErrorCode::UnsupportedScheme("x".to_owned()).as_i64(),
+            2
+        );
+        assert_eq!(super::ErrorCode::SigningFailed("x".to_owned()).as_i64(), 3);
+        assert_eq!(
+            super::ErrorCode::Other {
+                code: 42,
+                message: "x".to_owned()
+            }
+            .as_i64(),
+            42
+        );
+    }
+
+    #[test]
+    fn error_code_from_error_payload() {
+        let payload = super::ErrorPayload {
+            code: -1,
+            message: "boom".to_owned(),
+        };
+        let code: super::ErrorCode = payload.into();
+        assert!(matches!(code, super::ErrorCode::Internal(m) if m == "boom"));
+
+        let payload = super::ErrorPayload {
+            code: 1,
+            message: "gone".to_owned(),
+        };
+        let code: super::ErrorCode = payload.into();
+        assert!(matches!(code, super::ErrorCode::CertificateNotFound(m) if m == "gone"));
+
+        let payload = super::ErrorPayload {
+            code: 99,
+            message: "custom".to_owned(),
+        };
+        let code: super::ErrorCode = payload.into();
+        assert!(
+            matches!(code, super::ErrorCode::Other { code: 99, message } if message == "custom")
+        );
+    }
+
+    #[test]
+    fn error_code_to_error_payload() {
+        let code = super::ErrorCode::CertificateNotFound("not found".to_owned());
+        let payload: super::ErrorPayload = code.into();
+        assert_eq!(payload.code, 1);
+        assert_eq!(payload.message, "certificate not found: not found");
+    }
+
+    #[test]
+    fn error_payload_serde_preserves_wire_format() {
+        let payload = super::ErrorPayload {
+            code: 1,
+            message: "not found".to_owned(),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["code"], 1);
+
+        let decoded: super::ErrorPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.code, 1);
     }
 }

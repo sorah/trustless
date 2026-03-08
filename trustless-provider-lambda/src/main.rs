@@ -7,13 +7,11 @@ impl LambdaHandler {
     async fn invoke_lambda(
         &self,
         request: trustless_protocol::message::Request,
-    ) -> Result<trustless_protocol::message::Response, trustless_protocol::message::ErrorPayload>
-    {
+    ) -> Result<trustless_protocol::message::Response, trustless_protocol::message::ErrorCode> {
         let payload = serde_json::to_vec(&request).map_err(|e| {
-            trustless_protocol::message::ErrorPayload {
-                code: -1,
-                message: format!("failed to serialize request: {e}"),
-            }
+            trustless_protocol::message::ErrorCode::Internal(format!(
+                "failed to serialize request: {e}"
+            ))
         })?;
 
         let result = self
@@ -23,9 +21,10 @@ impl LambdaHandler {
             .payload(aws_sdk_lambda::primitives::Blob::new(payload))
             .send()
             .await
-            .map_err(|e| trustless_protocol::message::ErrorPayload {
-                code: -1,
-                message: format!("Lambda invocation failed: {e}"),
+            .map_err(|e| {
+                trustless_protocol::message::ErrorCode::Internal(format!(
+                    "Lambda invocation failed: {e}"
+                ))
             })?;
 
         if let Some(func_error) = result.function_error() {
@@ -33,26 +32,22 @@ impl LambdaHandler {
                 .payload()
                 .and_then(|p| String::from_utf8(p.as_ref().to_vec()).ok())
                 .unwrap_or_else(|| func_error.to_owned());
-            return Err(trustless_protocol::message::ErrorPayload {
-                code: -1,
-                message: format!("Lambda function error: {error_message}"),
-            });
+            return Err(trustless_protocol::message::ErrorCode::Internal(format!(
+                "Lambda function error: {error_message}"
+            )));
         }
 
-        let response_payload =
-            result
-                .payload()
-                .ok_or_else(|| trustless_protocol::message::ErrorPayload {
-                    code: -1,
-                    message: "Lambda returned no payload".to_owned(),
-                })?;
+        let response_payload = result.payload().ok_or_else(|| {
+            trustless_protocol::message::ErrorCode::Internal(
+                "Lambda returned no payload".to_owned(),
+            )
+        })?;
 
         let response: trustless_protocol::message::Response =
             serde_json::from_slice(response_payload.as_ref()).map_err(|e| {
-                trustless_protocol::message::ErrorPayload {
-                    code: -1,
-                    message: format!("failed to deserialize Lambda response: {e}"),
-                }
+                trustless_protocol::message::ErrorCode::Internal(format!(
+                    "failed to deserialize Lambda response: {e}"
+                ))
             })?;
 
         Ok(response)
@@ -62,10 +57,8 @@ impl LambdaHandler {
 impl trustless_protocol::handler::Handler for LambdaHandler {
     async fn initialize(
         &self,
-    ) -> Result<
-        trustless_protocol::message::InitializeResult,
-        trustless_protocol::message::ErrorPayload,
-    > {
+    ) -> Result<trustless_protocol::message::InitializeResult, trustless_protocol::message::ErrorCode>
+    {
         let request = trustless_protocol::message::Request::Initialize {
             id: 0,
             params: trustless_protocol::message::InitializeParams {},
@@ -76,21 +69,20 @@ impl trustless_protocol::handler::Handler for LambdaHandler {
                 trustless_protocol::message::SuccessResponse::Initialize { result, .. },
             ) => Ok(result),
             trustless_protocol::message::Response::Success(_) => {
-                Err(trustless_protocol::message::ErrorPayload {
-                    code: -1,
-                    message: "unexpected response method".to_owned(),
-                })
+                Err(trustless_protocol::message::ErrorCode::Internal(
+                    "unexpected response method".to_owned(),
+                ))
             }
             trustless_protocol::message::Response::Error(
                 trustless_protocol::message::ErrorResponse { error, .. },
-            ) => Err(error),
+            ) => Err(error.into()),
         }
     }
 
     async fn sign(
         &self,
         params: trustless_protocol::message::SignParams,
-    ) -> Result<trustless_protocol::message::SignResult, trustless_protocol::message::ErrorPayload>
+    ) -> Result<trustless_protocol::message::SignResult, trustless_protocol::message::ErrorCode>
     {
         let request = trustless_protocol::message::Request::Sign { id: 0, params };
         let response = self.invoke_lambda(request).await?;
@@ -99,14 +91,13 @@ impl trustless_protocol::handler::Handler for LambdaHandler {
                 trustless_protocol::message::SuccessResponse::Sign { result, .. },
             ) => Ok(result),
             trustless_protocol::message::Response::Success(_) => {
-                Err(trustless_protocol::message::ErrorPayload {
-                    code: -1,
-                    message: "unexpected response method".to_owned(),
-                })
+                Err(trustless_protocol::message::ErrorCode::Internal(
+                    "unexpected response method".to_owned(),
+                ))
             }
             trustless_protocol::message::Response::Error(
                 trustless_protocol::message::ErrorResponse { error, .. },
-            ) => Err(error),
+            ) => Err(error.into()),
         }
     }
 }

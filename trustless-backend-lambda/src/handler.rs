@@ -16,13 +16,21 @@ pub(crate) async fn handle(
         trustless_protocol::message::Request::Initialize { .. } => {
             trustless_protocol::message::Response::initialize(
                 id,
-                state.initialize().await.map_err(Into::into),
+                state.initialize().await.map_err(|e| {
+                    trustless_protocol::message::ErrorPayload::from(
+                        trustless_protocol::message::ErrorCode::from(e),
+                    )
+                }),
             )
         }
         trustless_protocol::message::Request::Sign { params, .. } => {
             trustless_protocol::message::Response::sign(
                 id,
-                state.sign(&params).await.map_err(Into::into),
+                state.sign(&params).await.map_err(|e| {
+                    trustless_protocol::message::ErrorPayload::from(
+                        trustless_protocol::message::ErrorCode::from(e),
+                    )
+                }),
             )
         }
     };
