@@ -3,10 +3,14 @@ use owo_colors::OwoColorize;
 use crate::provider::{ProviderState, ProviderStatusInfo, format_relative_time};
 
 #[derive(clap::Args)]
-pub struct StatusArgs {}
+pub struct StatusArgs {
+    /// Show all recorded errors (default: last error only)
+    #[arg(long)]
+    all_errors: bool,
+}
 
 #[tokio::main]
-pub async fn run(_args: &StatusArgs) -> anyhow::Result<()> {
+pub async fn run(args: &StatusArgs) -> anyhow::Result<()> {
     let has_color = supports_color::on(supports_color::Stream::Stderr).is_some();
     owo_colors::set_override(has_color);
 
@@ -36,7 +40,7 @@ pub async fn run(_args: &StatusArgs) -> anyhow::Result<()> {
         eprintln!("{}", "Providers".bold());
         for provider in &status.providers {
             eprintln!();
-            print_provider(provider);
+            print_provider(provider, args.all_errors);
         }
     }
 
@@ -60,7 +64,7 @@ fn state_dot(state: &ProviderState) -> String {
     }
 }
 
-fn print_provider(provider: &ProviderStatusInfo) {
+fn print_provider(provider: &ProviderStatusInfo, all_errors: bool) {
     eprintln!(
         "{} {} {}",
         state_dot(&provider.state),
@@ -88,9 +92,22 @@ fn print_provider(provider: &ProviderStatusInfo) {
     }
 
     if !provider.errors.is_empty() {
+        let errors: &[_] = if all_errors {
+            &provider.errors
+        } else {
+            &provider.errors[provider.errors.len() - 1..]
+        };
+        let hidden = provider.errors.len() - errors.len();
+
         eprintln!("  Errors:");
-        let last_idx = provider.errors.len() - 1;
-        for (i, error) in provider.errors.iter().enumerate() {
+        if hidden > 0 {
+            eprintln!(
+                "    {}",
+                format!("({hidden} earlier error(s) hidden, use --all-errors to show)").dimmed()
+            );
+        }
+        let last_idx = errors.len() - 1;
+        for (i, error) in errors.iter().enumerate() {
             let ts = format_relative_time(error.timestamp);
             eprintln!(
                 "    {} {}: {}",
