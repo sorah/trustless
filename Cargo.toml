@@ -3,7 +3,7 @@ resolver = "3"
 members = ["trustless", "trustless-protocol", "trustless-provider-failure", "trustless-provider-filesystem", "trustless-provider-lambda", "trustless-backend-lambda"]
 
 [workspace.dependencies]
-trustless-protocol = { version = "0.1.0", path = "trustless-protocol" }
+trustless-protocol = { version = "0.2.0", path = "trustless-protocol" }
 anyhow = "1"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
