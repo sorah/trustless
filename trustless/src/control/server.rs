@@ -36,7 +36,20 @@ fn control_router(state: ServerState) -> axum::Router {
         .route("/status", axum::routing::get(status))
         .route("/", axum::routing::get(status_page))
         .fallback(not_found)
+        .layer(axum::middleware::from_fn(server_header))
         .with_state(state)
+}
+
+async fn server_header(
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut resp = next.run(req).await;
+    resp.headers_mut().insert(
+        axum::http::header::SERVER,
+        axum::http::HeaderValue::from_static("trustless"),
+    );
+    resp
 }
 
 async fn ping() -> axum::Json<super::OkResponse> {
