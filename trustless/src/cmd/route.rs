@@ -35,6 +35,7 @@ pub fn run(cmd: &RouteCommand) -> anyhow::Result<()> {
             table.add_route(
                 &args.host,
                 args.backend,
+                None,
                 args.force,
                 args.allow_non_localhost,
             )?;

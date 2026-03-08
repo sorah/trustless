@@ -19,13 +19,13 @@ pub fn run(_args: &ListArgs) -> anyhow::Result<()> {
     let mut entries: Vec<_> = routes.into_iter().collect();
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
-    for (hostname, backend) in entries {
+    for (hostname, entry) in entries {
         let url = match port {
             Some(443) => format!("https://{hostname}"),
             Some(p) => format!("https://{hostname}:{p}"),
             None => hostname.clone(),
         };
-        println!("{url}  →  {backend}");
+        println!("{url}  →  {}", entry.backend);
     }
 
     Ok(())

@@ -42,7 +42,7 @@ impl ProxyError {
 struct ErrorResponse {
     error: ProxyError,
     accepts_html: bool,
-    routes: Option<std::collections::HashMap<String, std::net::SocketAddr>>,
+    routes: Option<std::collections::HashMap<String, crate::route::RouteEntry>>,
 }
 
 impl axum::response::IntoResponse for ErrorResponse {
@@ -668,7 +668,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let route_table = crate::route::RouteTable::new(dir.path().to_path_buf());
         route_table
-            .add_route("my-app.lo.dev.invalid", backend_addr, false, false)
+            .add_route("my-app.lo.dev.invalid", backend_addr, None, false, false)
             .unwrap();
 
         let state = ProxyState {

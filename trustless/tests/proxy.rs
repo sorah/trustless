@@ -40,7 +40,7 @@ async fn test_end_to_end_forwarding() {
     let dir = tempfile::tempdir().unwrap();
     let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
     route_table
-        .add_route("test.lo.dev.invalid", backend_addr, false, false)
+        .add_route("test.lo.dev.invalid", backend_addr, None, false, false)
         .unwrap();
 
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
@@ -91,6 +91,7 @@ async fn test_no_route_html_for_browser() {
         .add_route(
             "existing.lo.dev.invalid",
             "127.0.0.1:3000".parse().unwrap(),
+            None,
             false,
             false,
         )
@@ -138,7 +139,7 @@ async fn test_backend_refused_returns_502() {
     // Point to a port that is not listening
     let dead_addr: std::net::SocketAddr = "127.0.0.1:19999".parse().unwrap();
     route_table
-        .add_route("dead.lo.dev.invalid", dead_addr, false, false)
+        .add_route("dead.lo.dev.invalid", dead_addr, None, false, false)
         .unwrap();
 
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
@@ -213,7 +214,7 @@ async fn test_forwarded_headers_present() {
     let dir = tempfile::tempdir().unwrap();
     let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
     route_table
-        .add_route("headers.lo.dev.invalid", backend_addr, false, false)
+        .add_route("headers.lo.dev.invalid", backend_addr, None, false, false)
         .unwrap();
 
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
@@ -244,7 +245,7 @@ async fn test_websocket_upgrade() {
     let dir = tempfile::tempdir().unwrap();
     let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
     route_table
-        .add_route("ws.lo.dev.invalid", backend_addr, false, false)
+        .add_route("ws.lo.dev.invalid", backend_addr, None, false, false)
         .unwrap();
 
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
@@ -303,7 +304,7 @@ async fn test_hop_by_hop_headers_stripped_from_request() {
     let dir = tempfile::tempdir().unwrap();
     let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
     route_table
-        .add_route("hop.lo.dev.invalid", backend_addr, false, false)
+        .add_route("hop.lo.dev.invalid", backend_addr, None, false, false)
         .unwrap();
 
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
@@ -348,7 +349,7 @@ async fn test_hop_by_hop_headers_stripped_from_response() {
     let dir = tempfile::tempdir().unwrap();
     let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
     route_table
-        .add_route("resp.lo.dev.invalid", backend_addr, false, false)
+        .add_route("resp.lo.dev.invalid", backend_addr, None, false, false)
         .unwrap();
 
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
@@ -385,7 +386,7 @@ async fn test_loop_detection_returns_508() {
     let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
     let backend_addr: std::net::SocketAddr = "127.0.0.1:19999".parse().unwrap();
     route_table
-        .add_route("loop.lo.dev.invalid", backend_addr, false, false)
+        .add_route("loop.lo.dev.invalid", backend_addr, None, false, false)
         .unwrap();
 
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
@@ -423,7 +424,7 @@ async fn test_hops_below_threshold_allowed() {
     let dir = tempfile::tempdir().unwrap();
     let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
     route_table
-        .add_route("hops.lo.dev.invalid", backend_addr, false, false)
+        .add_route("hops.lo.dev.invalid", backend_addr, None, false, false)
         .unwrap();
 
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;

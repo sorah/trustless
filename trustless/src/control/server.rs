@@ -246,7 +246,7 @@ async fn status(
         .list_routes()
         .unwrap_or_default()
         .into_iter()
-        .map(|(k, v)| (k, v.to_string()))
+        .map(|(k, v)| (k, v.backend.to_string()))
         .collect();
 
     axum::Json(super::StatusResponse {

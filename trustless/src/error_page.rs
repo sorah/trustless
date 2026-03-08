@@ -7,28 +7,28 @@ fn engine() -> minijinja::Environment<'static> {
 }
 
 #[derive(serde::Serialize)]
-struct RouteEntry {
+struct ErrorPageRouteEntry {
     hostname: String,
     addr: String,
 }
 
 fn sorted_routes(
-    routes: &std::collections::HashMap<String, std::net::SocketAddr>,
-) -> Vec<RouteEntry> {
+    routes: &std::collections::HashMap<String, crate::route::RouteEntry>,
+) -> Vec<ErrorPageRouteEntry> {
     let mut sorted: Vec<_> = routes.iter().collect();
     sorted.sort_by_key(|(h, _)| h.as_str());
     sorted
         .into_iter()
-        .map(|(hostname, addr)| RouteEntry {
+        .map(|(hostname, entry)| ErrorPageRouteEntry {
             hostname: hostname.clone(),
-            addr: addr.to_string(),
+            addr: entry.backend.to_string(),
         })
         .collect()
 }
 
 pub fn render_404_page(
     host: &str,
-    routes: &std::collections::HashMap<String, std::net::SocketAddr>,
+    routes: &std::collections::HashMap<String, crate::route::RouteEntry>,
 ) -> String {
     let env = engine();
     let tmpl = env.get_template("404.html").unwrap();
@@ -44,7 +44,7 @@ pub fn render_404_page(
 
 pub fn render_404_text(
     host: &str,
-    routes: &std::collections::HashMap<String, std::net::SocketAddr>,
+    routes: &std::collections::HashMap<String, crate::route::RouteEntry>,
 ) -> String {
     let env = engine();
     let tmpl = env.get_template("404.txt").unwrap();
@@ -99,7 +99,13 @@ mod tests {
     #[test]
     fn test_render_404_page_with_routes() {
         let mut routes = std::collections::HashMap::new();
-        routes.insert("app.lo.dev".to_string(), "127.0.0.1:3000".parse().unwrap());
+        routes.insert(
+            "app.lo.dev".to_string(),
+            crate::route::RouteEntry {
+                backend: "127.0.0.1:3000".parse().unwrap(),
+                name: None,
+            },
+        );
         let html = render_404_page("unknown.host", &routes);
         assert!(html.contains("Active apps"));
         assert!(html.contains("app.lo.dev"));
@@ -137,7 +143,13 @@ mod tests {
     #[test]
     fn test_render_404_text_with_routes() {
         let mut routes = std::collections::HashMap::new();
-        routes.insert("app.lo.dev".to_string(), "127.0.0.1:3000".parse().unwrap());
+        routes.insert(
+            "app.lo.dev".to_string(),
+            crate::route::RouteEntry {
+                backend: "127.0.0.1:3000".parse().unwrap(),
+                name: None,
+            },
+        );
         let text = render_404_text("unknown.host", &routes);
         assert!(text.contains("Active apps:"));
         assert!(text.contains("app.lo.dev -> 127.0.0.1:3000"));

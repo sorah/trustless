@@ -205,7 +205,12 @@ async fn do_sidecar_inner(params: &ExecParams) -> anyhow::Result<(ExecIpcMessage
 
     let route_table = crate::route::RouteTable::new(crate::config::state_dir());
     let backend: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
-    route_table.add_route(&resolved.hostname, backend, true, false)?;
+    let name = match &params.hostname_spec {
+        HostnameSpec::Label(s) => Some(s.as_str()),
+        HostnameSpec::LabelWithWorktree { label, .. } => Some(label.as_str()),
+        HostnameSpec::Full(_) => None,
+    };
+    route_table.add_route(&resolved.hostname, backend, name, true, false)?;
 
     let guard = RouteGuard {
         route_table,
