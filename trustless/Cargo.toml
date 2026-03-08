@@ -15,6 +15,8 @@ bytes.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 daemonize = { version = "0.1.0", package = "daemonix" }
 http = "1"
+minijinja = "2"
+minijinja-embed = "2"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "server-graceful", "http1", "http2"] }
@@ -45,6 +47,9 @@ x509-parser.workspace = true
 shell-words = "1.1.1"
 owo-colors = { version = "4", features = ["supports-colors"] }
 supports-color = "3"
+
+[build-dependencies]
+minijinja-embed = "2"
 
 [dev-dependencies]
 tempfile = "3"

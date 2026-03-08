@@ -1,0 +1,20 @@
+{% extends "layout.html" %}
+{% block body %}
+<p class="desc">No app registered for <strong>{{ host }}</strong>.</p>
+{% if routes %}
+<div class="section">
+  <p class="label">Active apps</p>
+  <ul class="card">
+    {% for route in routes %}
+    <li><a data-hostname="{{ route.hostname }}" class="card-link"><span class="name">{{ route.hostname }}</span><span class="meta"><code class="port">{{ route.addr }}</code><span class="arrow">{{ arrow_svg }}</span></span></a></li>
+    {% endfor %}
+  </ul>
+</div>
+{% else %}
+<p class="empty">No apps running.</p>
+{% endif %}
+<div class="section">
+  <p class="label">To register an app</p>
+  <div class="terminal"><span class="prompt">$ </span>trustless run your-command</div>
+</div>
+{% endblock %}

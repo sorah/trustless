@@ -1,0 +1,13 @@
+{% extends "layout.html" %}
+{% block body %}
+<p class="desc">This request has passed through trustless <strong>{{ hops }}</strong> times for <strong>{{ host }}</strong>. This usually means a dev server (Vite, webpack, etc.) is proxying requests back through trustless without rewriting the Host header.</p>
+<div class="section">
+  <p class="label">Fix: add changeOrigin to your proxy config</p>
+  <pre class="terminal">proxy: {
+  "/api": {
+    target: "http://&lt;backend&gt;.localhost:&lt;port&gt;",
+    changeOrigin: true,
+  },
+}</pre>
+</div>
+{% endblock %}

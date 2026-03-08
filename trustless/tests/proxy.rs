@@ -58,7 +58,7 @@ async fn test_end_to_end_forwarding() {
 }
 
 #[tokio::test]
-async fn test_no_route_returns_502() {
+async fn test_no_route_returns_404() {
     let dir = tempfile::tempdir().unwrap();
     let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
@@ -71,7 +71,64 @@ async fn test_no_route_returns_502() {
         .await
         .unwrap();
 
-    assert_eq!(resp.status(), 502);
+    assert_eq!(resp.status(), 404);
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("no route for host: unknown.host"),
+        "plain text body: {body}"
+    );
+    assert!(
+        body.contains("trustless run"),
+        "should include usage hint: {body}"
+    );
+}
+
+#[tokio::test]
+async fn test_no_route_html_for_browser() {
+    let dir = tempfile::tempdir().unwrap();
+    let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
+    route_table
+        .add_route(
+            "existing.lo.dev.invalid",
+            "127.0.0.1:3000".parse().unwrap(),
+            false,
+            false,
+        )
+        .unwrap();
+
+    let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("http://{proxy_addr}/"))
+        .header("Host", "unknown.host")
+        .header("Accept", "text/html,application/xhtml+xml")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 404);
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        content_type.contains("text/html"),
+        "content-type: {content_type}"
+    );
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("<!DOCTYPE html>"), "should be HTML: {body}");
+    assert!(
+        body.contains("unknown.host"),
+        "should mention the host: {body}"
+    );
+    assert!(
+        body.contains("existing.lo.dev.invalid"),
+        "should list active routes: {body}"
+    );
 }
 
 #[tokio::test]
@@ -96,7 +153,10 @@ async fn test_backend_refused_returns_502() {
 
     assert_eq!(resp.status(), 502);
     let body = resp.text().await.unwrap();
-    assert!(body.contains("failed to connect to backend 127.0.0.1:19999"));
+    assert!(
+        body.contains("failed to connect to backend 127.0.0.1:19999"),
+        "body: {body}"
+    );
 }
 
 #[tokio::test]
@@ -116,7 +176,7 @@ async fn test_reserved_host_returns_503() {
     assert_eq!(resp.status(), 503);
     assert_eq!(
         resp.text().await.unwrap(),
-        "proxy control API not yet implemented"
+        "proxy control API not yet implemented\n"
     );
 }
 
@@ -341,7 +401,10 @@ async fn test_loop_detection_returns_508() {
 
     assert_eq!(resp.status(), 508);
     let body = resp.text().await.unwrap();
-    assert!(body.contains("loop detected"), "body: {body}");
+    assert!(
+        body.contains("loop detected for loop.lo.dev.invalid"),
+        "body: {body}"
+    );
 }
 
 #[tokio::test]

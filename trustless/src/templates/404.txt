@@ -1,0 +1,11 @@
+no route for host: {{ host }}
+{% if routes %}
+
+Active apps:
+{% for route in routes %}
+  {{ route.hostname }} -> {{ route.addr }}
+{% endfor %}
+{% endif %}
+
+To register an app:
+  $ trustless run your-command

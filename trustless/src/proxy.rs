@@ -31,6 +31,7 @@ enum ProxyError {
 impl ProxyError {
     fn status(&self) -> http::StatusCode {
         match self {
+            Self::NoRoute(_) => http::StatusCode::NOT_FOUND,
             Self::ControlApiNotImplemented => http::StatusCode::SERVICE_UNAVAILABLE,
             Self::LoopDetected { .. } => http::StatusCode::LOOP_DETECTED,
             _ => http::StatusCode::BAD_GATEWAY,
@@ -38,9 +39,65 @@ impl ProxyError {
     }
 }
 
-impl axum::response::IntoResponse for ProxyError {
+struct ErrorResponse {
+    error: ProxyError,
+    accepts_html: bool,
+    routes: Option<std::collections::HashMap<String, std::net::SocketAddr>>,
+}
+
+impl axum::response::IntoResponse for ErrorResponse {
     fn into_response(self) -> axum::response::Response {
-        (self.status(), self.to_string()).into_response()
+        let status = self.error.status();
+
+        if !self.accepts_html {
+            let body = match &self.error {
+                ProxyError::NoRoute(host) => {
+                    let routes = self.routes.as_ref().cloned().unwrap_or_default();
+                    crate::error_page::render_404_text(host, &routes)
+                }
+                ProxyError::LoopDetected { .. } => {
+                    format!(
+                        "{}\nIf you use Vite/webpack proxy, set changeOrigin: true.\n",
+                        self.error,
+                    )
+                }
+                _ => format!("{}\n", self.error),
+            };
+            return (status, [(http::header::CONTENT_TYPE, "text/plain")], body).into_response();
+        }
+
+        let html = match &self.error {
+            ProxyError::NoRoute(host) => {
+                let routes = self.routes.as_ref().cloned().unwrap_or_default();
+                crate::error_page::render_404_page(host, &routes)
+            }
+            ProxyError::BackendConnect { backend, .. } => {
+                crate::error_page::render_502_page(*backend, "is not responding")
+            }
+            ProxyError::BackendRequest { backend, .. } => {
+                crate::error_page::render_502_page(*backend, "failed to send request")
+            }
+            ProxyError::LoopDetected { host, hops } => {
+                crate::error_page::render_508_page(host, *hops)
+            }
+            _ => {
+                // For other errors (NoHostHeader, ControlApiNotImplemented, RouteResolution),
+                // fall back to plain text
+                return (
+                    status,
+                    [(http::header::CONTENT_TYPE, "text/plain")],
+                    format!("{}\n", self.error),
+                )
+                    .into_response();
+            }
+        };
+
+        (
+            status,
+            [(http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            html,
+        )
+            .into_response()
     }
 }
 
@@ -69,12 +126,34 @@ pub fn proxy_router(state: ProxyState) -> axum::Router {
         .with_state(std::sync::Arc::new(state))
 }
 
+fn accepts_html(headers: &http::HeaderMap) -> bool {
+    headers
+        .get(http::header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("text/html"))
+}
+
 async fn proxy_handler(
     axum::extract::State(state): axum::extract::State<std::sync::Arc<ProxyState>>,
     axum::Extension(ClientAddr(client_addr)): axum::Extension<ClientAddr>,
     req: axum::extract::Request,
-) -> Result<axum::response::Response, ProxyError> {
+) -> Result<axum::response::Response, ErrorResponse> {
     let start = std::time::Instant::now();
+
+    let wants_html = accepts_html(req.headers());
+    let route_table = state.route_table.clone();
+
+    let mk_err = move |error: ProxyError| {
+        let routes = match &error {
+            ProxyError::NoRoute(_) => route_table.list_routes().ok(),
+            _ => None,
+        };
+        ErrorResponse {
+            error,
+            accepts_html: wants_html,
+            routes,
+        }
+    };
 
     let host = req
         .headers()
@@ -87,13 +166,13 @@ async fn proxy_handler(
                 None => h.to_string(),
             })
         })
-        .ok_or(ProxyError::NoHostHeader)?;
+        .ok_or_else(|| mk_err(ProxyError::NoHostHeader))?;
 
     let host_without_port = crate::route::strip_port(&host);
 
     // Reserved hostname
     if host_without_port.eq_ignore_ascii_case("trustless") {
-        return Err(ProxyError::ControlApiNotImplemented);
+        return Err(mk_err(ProxyError::ControlApiNotImplemented));
     }
 
     // Loop prevention
@@ -105,21 +184,21 @@ async fn proxy_handler(
         .unwrap_or(0);
     if hops >= MAX_PROXY_HOPS {
         tracing::warn!(host = %host, hops = hops, "loop detected");
-        return Err(ProxyError::LoopDetected {
+        return Err(mk_err(ProxyError::LoopDetected {
             host: host.clone(),
             hops,
-        });
+        }));
     }
 
     let backend = match state.route_table.resolve(&host) {
         Ok(Some(addr)) => addr,
         Ok(None) => {
             tracing::warn!(host = %host, "no route found");
-            return Err(ProxyError::NoRoute(host));
+            return Err(mk_err(ProxyError::NoRoute(host)));
         }
         Err(e) => {
             tracing::error!(host = %host, error = %e, "route resolution error");
-            return Err(ProxyError::RouteResolution(e));
+            return Err(mk_err(ProxyError::RouteResolution(e)));
         }
     };
 
@@ -136,9 +215,13 @@ async fn proxy_handler(
         .map_or("/".to_string(), |pq| pq.to_string());
 
     let response = if is_upgrade {
-        handle_upgrade(state, client_addr, req, backend, &host, hops).await?
+        handle_upgrade(state, client_addr, req, backend, &host, hops)
+            .await
+            .map_err(&mk_err)?
     } else {
-        handle_request(state, client_addr, req, backend, &host, hops).await?
+        handle_request(state, client_addr, req, backend, &host, hops)
+            .await
+            .map_err(&mk_err)?
     };
 
     let status = response.status();

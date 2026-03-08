@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{ status }} {{ status_text }} - trustless</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #fff;
+    --fg: #171717;
+    --border: #eaeaea;
+    --surface: #fafafa;
+    --text-2: #666;
+    --text-3: #a1a1a1;
+    --accent: #0070f3;
+    --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'SFMono-Regular', Menlo, Monaco, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000;
+      --fg: #ededed;
+      --border: rgba(255,255,255,0.1);
+      --surface: #111;
+      --text-2: #888;
+      --text-3: #666;
+      --accent: #3291ff;
+    }
+  }
+  html { height: 100%; }
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg);
+    color: var(--fg);
+    min-height: 100%;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  .page {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 24px;
+  }
+  .heading {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .heading .status {
+    font-family: var(--font-mono);
+    font-size: 18px;
+    font-weight: 500;
+    color: var(--text-3);
+  }
+  .heading h1 {
+    font-size: 18px;
+    font-weight: 500;
+    color: var(--fg);
+  }
+  .content {
+    width: 100%;
+    max-width: 480px;
+  }
+  .desc {
+    font-size: 14px;
+    color: var(--text-2);
+    line-height: 1.7;
+    margin-top: 12px;
+  }
+  .desc strong {
+    color: var(--fg);
+    font-weight: 500;
+  }
+  .section { margin-top: 32px; }
+  .label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 10px;
+  }
+  .card {
+    list-style: none;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .card > li {
+    border-bottom: 1px solid var(--border);
+  }
+  .card > li:last-child { border-bottom: none; }
+  .card-link {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    text-decoration: none;
+    color: inherit;
+    transition: background 0.15s ease;
+  }
+  .card-link:hover { background: var(--surface); }
+  .card-link .name {
+    font-size: 14px;
+    font-weight: 500;
+    transition: color 0.15s ease;
+  }
+  .card-link:hover .name { color: var(--accent); }
+  .card-link .meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .card-link .port {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-3);
+  }
+  .card-link .arrow {
+    color: var(--text-3);
+    display: flex;
+    transition: transform 0.2s ease, color 0.2s ease;
+  }
+  .card-link:hover .arrow {
+    transform: translateX(2px);
+    color: var(--text-2);
+  }
+  .terminal {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 20px;
+    line-height: 1.7;
+    color: var(--fg);
+  }
+  .terminal .prompt {
+    color: var(--text-3);
+    user-select: none;
+  }
+  pre.terminal { white-space: pre-wrap; }
+  .empty {
+    font-size: 14px;
+    color: var(--text-3);
+    text-align: center;
+    padding: 32px 0;
+  }
+  .footer {
+    margin-top: 64px;
+    font-size: 12px;
+    color: var(--text-3);
+    font-family: var(--font-sans);
+  }
+  .footer a {
+    color: var(--text-3);
+    text-decoration: none;
+  }
+  .footer a:hover {
+    color: var(--text-2);
+    text-decoration: underline;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+<div class="content">
+<div class="heading"><span class="status">{{ status }}</span><h1>{{ status_text }}</h1></div>
+{% block body %}{% endblock %}
+</div>
+<p class="footer">Powered by <a href="https://github.com/sorah/trustless">sorah/trustless</a></p>
+</div>
+<script>document.querySelectorAll("a[data-hostname]").forEach(function(a){var p=location.port?":"+location.port:"";a.href=location.protocol+"//"+a.dataset.hostname+p+"/"});</script>
+</body>
+</html>
