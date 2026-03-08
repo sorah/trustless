@@ -34,6 +34,7 @@ fn control_router(state: ServerState) -> axum::Router {
         .route("/stop", axum::routing::post(stop))
         .route("/reload", axum::routing::post(reload))
         .route("/status", axum::routing::get(status))
+        .route("/", axum::routing::get(status_page))
         .fallback(not_found)
         .with_state(state)
 }
@@ -231,9 +232,7 @@ async fn reload(
     })
 }
 
-async fn status(
-    axum::extract::State(state): axum::extract::State<ServerState>,
-) -> axum::Json<super::StatusResponse> {
+fn build_status(state: &ServerState) -> super::StatusResponse {
     let profiles = state.orchestrator.provider_profiles();
     let mut providers = state.registry.list_providers();
     for provider in &mut providers {
@@ -249,12 +248,42 @@ async fn status(
         .map(|(k, v)| (k, v.backend.to_string()))
         .collect();
 
-    axum::Json(super::StatusResponse {
+    super::StatusResponse {
         pid: std::process::id(),
         port: state.port,
         providers,
         routes,
-    })
+    }
+}
+
+async fn status(
+    axum::extract::State(state): axum::extract::State<ServerState>,
+) -> axum::Json<super::StatusResponse> {
+    axum::Json(build_status(&state))
+}
+
+async fn status_page(
+    axum::extract::State(state): axum::extract::State<ServerState>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse as _;
+
+    let accepts_html = headers
+        .get(axum::http::header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("text/html"));
+
+    if accepts_html {
+        let status_data = build_status(&state);
+        let html = crate::error_page::render_status_page(&status_data);
+        (
+            [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            html,
+        )
+            .into_response()
+    } else {
+        axum::Json(build_status(&state)).into_response()
+    }
 }
 
 async fn not_found() -> (axum::http::StatusCode, axum::Json<super::ErrorResponse>) {
@@ -267,13 +296,12 @@ async fn not_found() -> (axum::http::StatusCode, axum::Json<super::ErrorResponse
 }
 
 fn extract_host(req: &axum::http::Request<axum::body::Body>) -> Option<String> {
+    // Check Host header first (HTTP/1.1), then URI authority (HTTP/2 :authority)
     req.headers()
         .get(axum::http::header::HOST)
         .and_then(|v| v.to_str().ok())
-        .map(|h| {
-            // Strip port if present
-            h.split(':').next().unwrap_or(h).to_owned()
-        })
+        .map(|h| h.split(':').next().unwrap_or(h).to_owned())
+        .or_else(|| req.uri().host().map(|h| h.to_owned()))
 }
 
 /// Build the top-level dispatch router.
@@ -288,7 +316,9 @@ pub fn dispatch_router(state: ServerState, proxy: axum::Router) -> axum::Router 
         move |req: axum::http::Request<axum::body::Body>| async move {
             use axum::response::IntoResponse as _;
             let host = extract_host(&req);
-            let is_control = host.as_deref() == Some("trustless");
+            let is_control = host
+                .as_deref()
+                .is_some_and(|h| h == "trustless" || h.starts_with("trustless."));
 
             if is_control {
                 let resp: axum::response::Response = control.oneshot(req).await.into_response();
@@ -445,6 +475,88 @@ mod tests {
         assert!(json.pid > 0);
         assert!(json.providers.is_empty());
         assert!(json.routes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn trustless_subdomain_routes_to_control() {
+        let (state, _rx, _dir) = test_state();
+        let app = dispatch_router(state, stub_proxy());
+
+        let req = axum::http::Request::builder()
+            .uri("/ping")
+            .header("host", "trustless.lo.dev.invalid")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let json: super::super::OkResponse = serde_json::from_slice(&body).unwrap();
+        assert!(json.ok);
+    }
+
+    #[tokio::test]
+    async fn html_fallback_returns_status_page() {
+        let (state, _rx, _dir) = test_state();
+        let app = dispatch_router(state, stub_proxy());
+
+        let req = axum::http::Request::builder()
+            .uri("/")
+            .header("host", "trustless.lo.dev.invalid")
+            .header("accept", "text/html,application/xhtml+xml")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        let html = std::str::from_utf8(&body).unwrap();
+        assert!(html.contains("<!DOCTYPE html>"));
+        assert!(html.contains("<title>trustless</title>"));
+        assert!(html.contains("port"));
+        assert!(html.contains("No apps running."));
+    }
+
+    #[tokio::test]
+    async fn root_json_returns_status() {
+        let (state, _rx, _dir) = test_state();
+        let app = dispatch_router(state, stub_proxy());
+
+        let req = axum::http::Request::builder()
+            .uri("/")
+            .header("host", "trustless")
+            .header("accept", "application/json")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let json: super::super::StatusResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json.port, 1443);
+    }
+
+    #[tokio::test]
+    async fn unknown_path_returns_404() {
+        let (state, _rx, _dir) = test_state();
+        let app = dispatch_router(state, stub_proxy());
+
+        let req = axum::http::Request::builder()
+            .uri("/nonexistent")
+            .header("host", "trustless")
+            .header("accept", "text/html")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let json: super::super::ErrorResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json.error, "not found");
     }
 
     #[tokio::test]

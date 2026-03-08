@@ -171,7 +171,11 @@ async fn proxy_handler(
     let host_without_port = crate::route::strip_port(&host);
 
     // Reserved hostname
-    if host_without_port.eq_ignore_ascii_case("trustless") {
+    if host_without_port.eq_ignore_ascii_case("trustless")
+        || host_without_port
+            .to_ascii_lowercase()
+            .starts_with("trustless.")
+    {
         return Err(mk_err(ProxyError::ControlApiNotImplemented));
     }
 

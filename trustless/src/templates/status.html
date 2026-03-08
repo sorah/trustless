@@ -1,0 +1,107 @@
+{% extends "layout.html" %}
+{% block head %}
+<style>
+  .card-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+  }
+  .card-item .name {
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .card-item .state {
+    font-size: 13px;
+    color: var(--text-3);
+    font-style: italic;
+    margin-left: auto;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot-running { background: #22c55e; }
+  .dot-restarting { background: #eab308; }
+  .dot-failed { background: #ef4444; }
+  .cert-list {
+    padding: 0 16px 14px 34px;
+  }
+  .cert {
+    font-size: 13px;
+    color: var(--fg);
+    line-height: 1.6;
+  }
+  .cert .dimmed {
+    color: var(--text-3);
+  }
+  .error-list {
+    padding: 0 16px 14px 34px;
+  }
+  .error-item {
+    font-size: 13px;
+    color: var(--text-2);
+    line-height: 1.6;
+  }
+  .error-item .kind {
+    color: var(--fg);
+  }
+</style>
+{% endblock %}
+{% block body %}
+<p class="desc">Proxy listening on port <strong>{{ port }}</strong> <span style="color:var(--text-3)">(pid {{ pid }})</span></p>
+
+{% if providers %}
+<div class="section">
+  <p class="label">Providers</p>
+  <ul class="card">
+    {% for p in providers %}
+    <li>
+      <div class="card-item">
+        <span class="dot dot-{{ p.state }}"></span>
+        <span class="name">{{ p.name }}</span>
+        <span class="state">{{ p.state }}</span>
+      </div>
+      {% if p.certificates %}
+      <div class="cert-list">
+        {% for cert in p.certificates %}
+        <div class="cert">{{ cert.domains | join(", ") }} <span class="dimmed">expires {{ cert.not_after }}</span></div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if p.errors %}
+      <div class="error-list">
+        {% for error in p.errors %}
+        <div class="error-item"><span class="kind">{{ error.kind }}</span>: {{ error.message }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if routes %}
+<div class="section">
+  <p class="label">Active apps</p>
+  <ul class="card">
+    {% for route in routes %}
+    <li><a data-hostname="{{ route.hostname }}" class="card-link">
+      <span class="name">{{ route.hostname }}</span>
+      <span class="meta"><code class="port">{{ route.addr }}</code><span class="arrow">{{ arrow_svg }}</span></span>
+    </a></li>
+    {% endfor %}
+  </ul>
+</div>
+{% else %}
+<p class="empty">No apps running.</p>
+{% endif %}
+
+<div class="section">
+  <p class="label">To register an app</p>
+  <div class="terminal"><span class="prompt">$ </span>trustless run your-command</div>
+</div>
+{% endblock %}

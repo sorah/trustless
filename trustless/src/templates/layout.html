@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>{{ status }} {{ status_text }} - trustless</title>
+<title>{% if page_title %}{{ page_title }}{% else %}{{ status }} {{ status_text }} - trustless{% endif %}</title>
 <style>
   *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
   :root {
@@ -167,6 +167,7 @@
     text-decoration: underline;
   }
 </style>
+{% block head %}{% endblock %}
 </head>
 <body>
 <div class="page">

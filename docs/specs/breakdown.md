@@ -64,10 +64,6 @@ N/A by design (Trustless uses remote signing with real domains instead of local 
 
 #### Remaining work
 
-##### Service discovery
-
-- `trustless get <name>` — print URL for a named service (for cross-service wiring, scripts)
-
 ##### README
 
 - README that sounds fancy
@@ -82,10 +78,4 @@ N/A by design (Trustless uses remote signing with real domains instead of local 
 - status must show routes first, providers later
 - hardening: limit blob, log blob
 - secrecy on Message structs
-- `trustless exec` (`run`) must not reject for ambiguous profiles. Silently pick one
-- `trustless get`
-- `trustless proxy reload` should trigger immediate restart of all providers regardless of backoff
-  - inform user to do this in `trustless status` to restart
-- `trustless s` and `trustless l` aliases for `status` and `list`
 - plain http `*.localhost` support
-- `trustless.{any_domain}` should serve active app list and status view

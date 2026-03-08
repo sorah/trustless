@@ -67,6 +67,34 @@ pub fn render_502_page(backend: std::net::SocketAddr, error_detail: &str) -> Str
     .expect("render 502.html")
 }
 
+pub fn render_status_page(status: &crate::control::StatusResponse) -> String {
+    let routes: Vec<ErrorPageRouteEntry> = {
+        let mut sorted: Vec<_> = status.routes.iter().collect();
+        sorted.sort_by_key(|(h, _)| h.as_str());
+        sorted
+            .into_iter()
+            .map(|(hostname, addr)| ErrorPageRouteEntry {
+                hostname: hostname.clone(),
+                addr: addr.clone(),
+            })
+            .collect()
+    };
+
+    let env = engine();
+    let tmpl = env.get_template("status.html").unwrap();
+    tmpl.render(minijinja::context! {
+        page_title => "trustless",
+        status => "",
+        status_text => "trustless",
+        pid => status.pid,
+        port => status.port,
+        providers => &status.providers,
+        routes => routes,
+        arrow_svg => minijinja::Value::from_safe_string(ARROW_SVG.to_string()),
+    })
+    .expect("render status.html")
+}
+
 pub fn render_508_page(host: &str, hops: u32) -> String {
     let env = engine();
     let tmpl = env.get_template("508.html").unwrap();
@@ -82,6 +110,65 @@ pub fn render_508_page(host: &str, hops: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_render_status_page_empty() {
+        let status = crate::control::StatusResponse {
+            pid: 12345,
+            port: 1443,
+            providers: vec![],
+            routes: std::collections::HashMap::new(),
+        };
+        let html = render_status_page(&status);
+        assert!(html.contains("<!DOCTYPE html>"));
+        assert!(html.contains("<title>trustless</title>"));
+        assert!(html.contains("1443"));
+        assert!(html.contains("12345"));
+        assert!(html.contains("No apps running."));
+    }
+
+    #[test]
+    fn test_render_status_page_with_routes() {
+        let mut routes = std::collections::HashMap::new();
+        routes.insert("app.lo.dev".to_string(), "127.0.0.1:3000".to_string());
+        let status = crate::control::StatusResponse {
+            pid: 1,
+            port: 1443,
+            providers: vec![],
+            routes,
+        };
+        let html = render_status_page(&status);
+        assert!(html.contains("app.lo.dev"));
+        assert!(html.contains("127.0.0.1:3000"));
+        assert!(html.contains("Active apps"));
+    }
+
+    #[test]
+    fn test_render_status_page_with_providers() {
+        let status = crate::control::StatusResponse {
+            pid: 1,
+            port: 1443,
+            providers: vec![crate::provider::ProviderStatusInfo {
+                name: "test-provider".to_string(),
+                state: crate::provider::ProviderState::Running,
+                command: vec![],
+                certificates: vec![crate::provider::CertificateStatusInfo {
+                    id: "v1".to_string(),
+                    domains: vec!["*.lo.dev".to_string()],
+                    issuer: "Test CA".to_string(),
+                    serial: "1234".to_string(),
+                    not_after: "2027-01-01".to_string(),
+                }],
+                errors: vec![],
+            }],
+            routes: std::collections::HashMap::new(),
+        };
+        let html = render_status_page(&status);
+        assert!(html.contains("test-provider"));
+        assert!(html.contains("dot-running"));
+        assert!(html.contains("*.lo.dev"));
+        assert!(html.contains("2027-01-01"));
+    }
 
     #[test]
     fn test_render_404_page_no_routes() {
