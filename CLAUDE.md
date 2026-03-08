@@ -1,32 +1,43 @@
-See docs/internals.md for internal details
+# Trustless
 
-## We're at early development stage
+HTTPS on registrable domains for local development, without touching system trust stores. Inspired by [Portless](https://github.com/vercel-labs/portless).
 
-- Mimic `portless` behaviour but keep things minimal
+A local TLS-terminating proxy that delegates signing to an external key provider (e.g. AWS Lambda + S3), so developers get HTTPS on real wildcard domains (`*.dev.example.com`) without distributing private keys or installing local CAs.
 
-## Rust coding guideline
+## Architecture
+
+- **Key provider protocol**: providers are child processes communicating via length-delimited JSON over stdin/stdout. They hold certificates and sign TLS handshakes on request, but never export private keys.
+- **Proxy**: `tokio` + `rustls` + `axum`. TLS termination via `LazyConfigAcceptor` (per-connection SNI resolution), HTTP forwarding via `reqwest`, WebSocket upgrade via raw hyper.
+- **Remote signing bridge**: async provider calls bridged into rustls's sync `Signer::sign()` via `mpsc` + `oneshot` channels with `block_in_place`.
+- **Provider lifecycle**: `ProviderProcess` → `Supervisor` (crash recovery, exponential backoff) → `ProviderOrchestrator` (multi-provider management).
+- **`trustless exec`/`run`**: fork+sidecar pattern (from [mairu](https://github.com/sorah/mairu)). Sidecar registers route, parent execs user command with `PORT`/`HOST` env vars.
+
+See `docs/internal.md` for full details.
+
+## Project Status
+
+Core features are complete and at Portless feature parity. Remaining work (`docs/specs/breakdown.md`):
+- HTML error pages (502, 508, 404-with-route-index, dark mode)
+- Colored CLI output
+- `trustless get <name>` (print URL for a service)
+- Plain HTTP `*.localhost` support
+- Misc quality (cleanup tests, status ordering, secrecy on Message structs)
+
+## Workspace Crates
+
+- **`trustless`** — CLI (`clap`) and proxy server. `src/cmd/` for CLI commands, `src/proxy.rs` for HTTP forwarding, `src/provider/` for provider lifecycle, `src/signer.rs` for remote signing bridge, `src/control/` for control API, `src/route.rs` for route table.
+- **`trustless-protocol`** — Protocol types, codec (length-delimited JSON), handler trait, client, and `provider_helpers` for building providers easily.
+- **`trustless-provider-filesystem`** — Reference provider backed by static cert files on disk. Use `/home/sorah/tmp/lo` for example certificate directory.
+- **`trustless-provider-lambda`** — Provider CLI that delegates to an AWS Lambda function.
+- **`trustless-backend-lambda`** — The Lambda function itself (the server-side backend for `trustless-provider-lambda`).
+
+## Rust Coding Guidelines
 
 - Always refer to `/sorah-guides:rust` skill.
-- Always write unit tests in the same file `#[cfg(test)] mod tests { ... }` style, and integration tests in `tests/` directory.
-
-### Errors
-
-- Use of `anyhow` is discouraged outside of command-line interface context, especially `src/main.rs`, `src/examples/*`, `src/bin/*`, and `src/cmd/*` files.
-- Choose `thiserror` for defining error types in library code, and use `anyhow` for error handling in CLI code.
-
-### Prior Art for launching proxy and Sorah's rust coding style
-
-`/home/sorah/git/github.com/sorah/mairu` has a certain example how we can run an agent process automatically and in background, plus looking up state and configuration directory.
-
-## Crates
-
-- `trustless` for CLI and proxy server
-- `trustless-protocol` for protocol utilities
-- `trustless-provider-filesystem` for testing and example key provider implementation. Refer to given static certificate directory for looking up keys
-  - Use `/home/sorah/tmp/lo` for example certificate registry directory.
+- Unit tests in the same file (`#[cfg(test)] mod tests { ... }`), integration tests in `tests/`.
+- `thiserror` for library error types, `anyhow` only in CLI context (`src/main.rs`, `src/cmd/*`, `src/examples/*`).
+- Prior art for process management and coding style: `/home/sorah/git/github.com/sorah/mairu`
 
 ## Referencing library code
 
-Refer to ~/.cargo/registry/src/ if you want to look up actual dependencies internal and documents
-
-
+Refer to `~/.cargo/registry/src/` to look up dependency internals and docs.
