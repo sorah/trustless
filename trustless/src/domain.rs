@@ -323,6 +323,15 @@ pub(crate) fn resolve_hostname(
             if wildcard_domains.len() == 1 {
                 wildcard_domains[0]
             } else if wildcard_domains.is_empty() {
+                if provider.state != crate::provider::ProviderState::Running {
+                    let diag = provider.format_diagnostics(5);
+                    anyhow::bail!(
+                        "no wildcard domains in provider '{}' certificates (provider is {})\n{}",
+                        provider.name,
+                        provider.state,
+                        diag
+                    );
+                }
                 anyhow::bail!(
                     "no wildcard domains in provider '{}' certificates",
                     provider.name
@@ -398,6 +407,7 @@ mod tests {
         crate::provider::ProviderStatusInfo {
             name: name.to_string(),
             state: crate::provider::ProviderState::Running,
+            command: Vec::new(),
             certificates: vec![crate::provider::CertificateStatusInfo {
                 id: "test".to_string(),
                 domains: domains.into_iter().map(|s| s.to_string()).collect(),

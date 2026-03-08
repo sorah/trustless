@@ -219,7 +219,13 @@ async fn reload(
 async fn status(
     axum::extract::State(state): axum::extract::State<ServerState>,
 ) -> axum::Json<super::StatusResponse> {
-    let providers = state.registry.list_providers();
+    let profiles = state.orchestrator.provider_profiles();
+    let mut providers = state.registry.list_providers();
+    for provider in &mut providers {
+        if let Some(profile) = profiles.get(&provider.name) {
+            provider.command.clone_from(&profile.command);
+        }
+    }
     let routes = state
         .route_table
         .list_routes()

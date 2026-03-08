@@ -214,6 +214,7 @@ impl ProviderRegistry {
             .map(|(name, entry)| super::ProviderStatusInfo {
                 name: name.clone(),
                 state: entry.state.clone(),
+                command: Vec::new(),
                 certificates: entry
                     .certificates
                     .iter()

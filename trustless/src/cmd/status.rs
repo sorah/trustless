@@ -22,7 +22,7 @@ pub async fn run(_args: &StatusArgs) -> anyhow::Result<()> {
         eprintln!();
         eprintln!("Providers:");
         for provider in &status.providers {
-            eprintln!("  {}: {}", provider.name, provider.state);
+            eprintln!("  {}", provider.format_header());
 
             for cert in &provider.certificates {
                 let domains = cert.domains.join(", ");
@@ -32,9 +32,7 @@ pub async fn run(_args: &StatusArgs) -> anyhow::Result<()> {
                 eprintln!("      expires: {}", cert.not_after);
             }
 
-            for error in &provider.errors {
-                eprintln!("    error ({}): {}", error.kind, error.message);
-            }
+            eprint!("{}", provider.format_errors(20));
         }
     }
 

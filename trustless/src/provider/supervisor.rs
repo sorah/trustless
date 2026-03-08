@@ -1,4 +1,4 @@
-use super::orchestrator::{SpawnResult, SupervisorCommand, spawn_init_register};
+use super::orchestrator::{SpawnError, SpawnResult, SupervisorCommand, spawn_init_register};
 use super::registry::ProviderRegistry;
 use super::{ProviderError, ProviderErrorKind, ProviderState};
 
@@ -113,9 +113,9 @@ impl Supervisor {
                 self.apply_spawn_result(result);
                 let _ = reply.send(Ok(()));
             }
-            Err(e) => {
-                self.record_init_failure(&format!("manual restart failed: {e}"));
-                let _ = reply.send(Err(e));
+            Err(spawn_err) => {
+                self.record_spawn_failure("manual restart failed", spawn_err.stderr_snapshot);
+                let _ = reply.send(Err(spawn_err.error));
                 self.backoff_respawn_loop().await;
             }
         }
@@ -171,8 +171,8 @@ impl Supervisor {
                                     let _ = reply.send(Ok(()));
                                     return;
                                 }
-                                Err(e) => {
-                                    let _ = reply.send(Err(e));
+                                Err(spawn_err) => {
+                                    let _ = reply.send(Err(spawn_err.error));
                                     continue;
                                 }
                             }
@@ -186,9 +186,12 @@ impl Supervisor {
                     self.apply_spawn_result(result);
                     return;
                 }
-                Err(e) => {
-                    tracing::error!(provider = %self.name, "respawn failed: {e}");
-                    self.record_init_failure(&format!("respawn failed: {e}"));
+                Err(spawn_err) => {
+                    tracing::error!(provider = %self.name, "respawn failed: {}", spawn_err.error);
+                    self.record_spawn_failure(
+                        &format!("respawn failed: {}", spawn_err.error),
+                        spawn_err.stderr_snapshot,
+                    );
                     self.backoff = next_backoff(self.backoff);
                     tracing::debug!(provider = %self.name, next_delay = ?self.backoff, "increasing backoff");
                 }
@@ -204,19 +207,19 @@ impl Supervisor {
         tracing::info!(provider = %self.name, "provider respawned successfully");
     }
 
-    fn record_init_failure(&self, message: &str) {
+    fn record_spawn_failure(&self, context: &str, stderr_snapshot: Option<Vec<String>>) {
         self.registry.push_error(
             &self.name,
             ProviderError {
                 timestamp: std::time::SystemTime::now(),
                 kind: ProviderErrorKind::InitFailure,
-                message: message.to_owned(),
-                stderr_snapshot: None,
+                message: context.to_owned(),
+                stderr_snapshot,
             },
         );
     }
 
-    async fn respawn(&self) -> Result<SpawnResult, crate::Error> {
+    async fn respawn(&self) -> Result<SpawnResult, SpawnError> {
         tracing::info!(provider = %self.name, "spawning provider process");
         spawn_init_register(&self.name, &self.profile, &self.registry).await
     }
@@ -249,17 +252,17 @@ pub(super) async fn run_recovering(
                                     .run().await;
                                 return;
                             }
-                            Err(e) => {
+                            Err(spawn_err) => {
                                 registry.push_error(
                                     &name,
                                     ProviderError {
                                         timestamp: std::time::SystemTime::now(),
                                         kind: ProviderErrorKind::InitFailure,
-                                        message: format!("manual restart failed: {e}"),
-                                        stderr_snapshot: None,
+                                        message: format!("manual restart failed: {}", spawn_err.error),
+                                        stderr_snapshot: spawn_err.stderr_snapshot,
                                     },
                                 );
-                                let _ = reply.send(Err(e));
+                                let _ = reply.send(Err(spawn_err.error));
                                 continue;
                             }
                         }
@@ -276,15 +279,15 @@ pub(super) async fn run_recovering(
                     .await;
                 return;
             }
-            Err(e) => {
-                tracing::error!(provider = %name, "respawn failed: {e}");
+            Err(spawn_err) => {
+                tracing::error!(provider = %name, "respawn failed: {}", spawn_err.error);
                 registry.push_error(
                     &name,
                     ProviderError {
                         timestamp: std::time::SystemTime::now(),
                         kind: ProviderErrorKind::InitFailure,
-                        message: format!("respawn failed: {e}"),
-                        stderr_snapshot: None,
+                        message: format!("respawn failed: {}", spawn_err.error),
+                        stderr_snapshot: spawn_err.stderr_snapshot,
                     },
                 );
                 backoff = next_backoff(backoff);

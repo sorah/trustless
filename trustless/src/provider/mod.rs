@@ -90,8 +90,101 @@ pub struct CertificateStatusInfo {
 pub struct ProviderStatusInfo {
     pub name: String,
     pub state: ProviderState,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command: Vec<String>,
     pub certificates: Vec<CertificateStatusInfo>,
     pub errors: Vec<ProviderError>,
+}
+
+/// Format a `SystemTime` as a human-friendly relative time string (e.g. "5s ago", "2m ago").
+pub fn format_relative_time(t: std::time::SystemTime) -> String {
+    let elapsed = t.elapsed().unwrap_or_default();
+    let secs = elapsed.as_secs();
+    if secs < 60 {
+        format!("{}s ago", secs)
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else if secs < 86400 {
+        format!("{}h ago", secs / 3600)
+    } else {
+        format!("{}d ago", secs / 86400)
+    }
+}
+
+impl ProviderStatusInfo {
+    /// Format the provider header line: `"name [command]: state"`
+    pub fn format_header(&self) -> String {
+        if self.command.is_empty() {
+            format!("{}: {}", self.name, self.state)
+        } else {
+            format!(
+                "{} [{}]: {}",
+                self.name,
+                shell_words::join(&self.command),
+                self.state
+            )
+        }
+    }
+
+    /// Format error lines with timestamps and optional stderr tail.
+    /// `stderr_lines` controls how many stderr lines to show per error (0 = none).
+    pub fn format_errors(&self, stderr_lines: usize) -> String {
+        let mut out = String::new();
+        for error in &self.errors {
+            let ts = format_relative_time(error.timestamp);
+            out.push_str(&format!(
+                "    error ({}) [{}]: {}\n",
+                error.kind, ts, error.message
+            ));
+            if stderr_lines > 0
+                && let Some(ref lines) = error.stderr_snapshot
+            {
+                let total = lines.len();
+                let skip = total.saturating_sub(stderr_lines);
+                if skip > 0 {
+                    out.push_str(&format!("      | ... ({} more lines)\n", skip));
+                }
+                for line in lines.iter().skip(skip) {
+                    out.push_str(&format!("      | {}\n", line));
+                }
+            }
+        }
+        out
+    }
+
+    /// Combined header + errors for use in diagnostic output.
+    pub fn format_diagnostics(&self, stderr_lines: usize) -> String {
+        let mut out = String::new();
+        out.push_str(&format!(
+            "trustless: note: provider '{}' is {} ({})\n",
+            self.name,
+            self.state,
+            if self.command.is_empty() {
+                "unknown command".to_owned()
+            } else {
+                shell_words::join(&self.command)
+            }
+        ));
+        if let Some(error) = self.errors.last() {
+            let ts = format_relative_time(error.timestamp);
+            out.push_str(&format!(
+                "trustless: note: last error ({}) [{}]: {}\n",
+                error.kind, ts, error.message
+            ));
+            if let Some(ref lines) = error.stderr_snapshot {
+                let total = lines.len();
+                let skip = total.saturating_sub(stderr_lines);
+                if skip > 0 {
+                    out.push_str(&format!("  | ... ({} more lines)\n", skip));
+                }
+                for line in lines.iter().skip(skip) {
+                    out.push_str(&format!("  | {}\n", line));
+                }
+            }
+        }
+        out.push_str("trustless: note: run `trustless status` for details\n");
+        out
+    }
 }
 
 // --- ProviderSession ---

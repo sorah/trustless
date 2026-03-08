@@ -67,8 +67,8 @@ impl ProviderOrchestrator {
                 );
                 tokio::spawn(supervisor.run())
             }
-            Err(e) if resilient => {
-                tracing::error!(provider = %name, "initial startup failed, will retry in background: {e}");
+            Err(spawn_err) if resilient => {
+                tracing::error!(provider = %name, "initial startup failed, will retry in background: {}", spawn_err.error);
                 self.inner
                     .registry
                     .register_placeholder(name, super::ProviderState::Restarting);
@@ -77,8 +77,8 @@ impl ProviderOrchestrator {
                     super::ProviderError {
                         timestamp: std::time::SystemTime::now(),
                         kind: super::ProviderErrorKind::InitFailure,
-                        message: format!("initial startup failed: {e}"),
-                        stderr_snapshot: None,
+                        message: format!("initial startup failed: {}", spawn_err.error),
+                        stderr_snapshot: spawn_err.stderr_snapshot,
                     },
                 );
                 tokio::spawn(super::supervisor::run_recovering(
@@ -89,7 +89,7 @@ impl ProviderOrchestrator {
                     command_rx,
                 ))
             }
-            Err(e) => return Err(e),
+            Err(spawn_err) => return Err(spawn_err.error),
         };
 
         self.register_supervisor(name, command_tx, task, cancel, profile);
@@ -223,6 +223,15 @@ pub(super) struct SpawnResult {
     pub(super) stderr_task: tokio::task::JoinHandle<()>,
 }
 
+/// Error from `spawn_init_register` that carries an optional stderr snapshot.
+#[derive(thiserror::Error, Debug)]
+#[error("{error}")]
+pub(super) struct SpawnError {
+    #[source]
+    pub(super) error: crate::Error,
+    pub(super) stderr_snapshot: Option<Vec<String>>,
+}
+
 const STDERR_RING_CAPACITY: usize = 100;
 const MAX_STDERR_LINE_LENGTH: usize = 8192;
 
@@ -231,8 +240,13 @@ pub(super) async fn spawn_init_register(
     name: &str,
     profile: &crate::config::Profile,
     registry: &ProviderRegistry,
-) -> Result<SpawnResult, crate::Error> {
-    let process = super::process::ProviderProcess::spawn(&profile.command).await?;
+) -> Result<SpawnResult, SpawnError> {
+    let process = super::process::ProviderProcess::spawn(&profile.command)
+        .await
+        .map_err(|e| SpawnError {
+            error: e.into(),
+            stderr_snapshot: None,
+        })?;
     let (client, stderr, child) = process.into_parts();
     let client = std::sync::Arc::new(client);
 
@@ -266,14 +280,36 @@ pub(super) async fn spawn_init_register(
         })
     };
 
-    let init = client.initialize().await?;
+    let init = match client.initialize().await {
+        Ok(init) => init,
+        Err(e) => {
+            // Wait for stderr reader to finish so we capture all output
+            let _ = child.stdin; // drop stdin to signal EOF if needed
+            // Give the stderr reader a moment to finish
+            let _ = tokio::time::timeout(std::time::Duration::from_millis(500), stderr_task).await;
+            let snapshot: Vec<String> = stderr_lines.lock().unwrap().iter().cloned().collect();
+            return Err(SpawnError {
+                error: e.into(),
+                stderr_snapshot: if snapshot.is_empty() {
+                    None
+                } else {
+                    Some(snapshot)
+                },
+            });
+        }
+    };
 
     let handle = crate::signer::SigningWorker::start(
         client.clone(),
         std::time::Duration::from_secs(profile.sign_timeout_seconds),
     );
 
-    registry.replace_provider(name, init, handle.clone())?;
+    registry
+        .replace_provider(name, init, handle.clone())
+        .map_err(|e| SpawnError {
+            error: e,
+            stderr_snapshot: None,
+        })?;
 
     Ok(SpawnResult {
         child,
