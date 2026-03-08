@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/sorah/trustless/compare/trustless-protocol/v0.1.0...trustless-protocol/v0.2.0) - 2026-03-08
+
+### Fixed
+
+- fix clippy warnings in provider_helpers
+
+### Other
+
+- use valid TLS 1.3 blobs in downstream crate tests
+- validate sign blob is TLS 1.3 server CertificateVerify
+- introduce SecretBox<Base64Bytes> for sign blob and signature
+- promote to thiserror error enum with messages
+- rename trustless-provider-stub → trustless-provider-filesystem
+- extract CertificateSource + CachingBackend into trustless-protocol
+
 ## [0.1.0](https://github.com/sorah/trustless/releases/tag/trustless-protocol/v0.1.0) - 2026-03-07
 
 ### Other

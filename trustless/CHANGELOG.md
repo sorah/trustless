@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/sorah/trustless/compare/trustless/v0.1.0...trustless/v0.2.0) - 2026-03-08
+
+### Other
+
+- capture stderr snapshot on errors
+- record sign errors in provider error ring buffer
+- rename ControlApiNotImplemented to ReservedHostname
+- add Server: trustless response header
+- HTML status page on trustless.* hostnames
+- silently pick first wildcard domain instead of erroring
+- add `trustless get <name>`
+- introduce named route entries
+- show only last error, --all-errors for full history
+- restart all providers to bypass backoff
+- silently pick first provider when --profile omitted
+- add `s` and `l` aliases for status and list
+- styled HTML error pages
+- styled output with owo-colors
+- improve provider-down UX in status and exec
+- setsid to detach from tty
+- `trustless list` subcommand
+- worktree-aware hostname composition
+- auto-select wildcard domain by label overlap
+- rename trustless-provider-stub → trustless-provider-filesystem
+- extract domain.rs, rename wildcard_domain → domain_suffix
+- introduce framework detection and flag injection
+- support TRUSTLESS=0/skip to bypass proxy in exec and run
+- introduce `trustless run` subcommand
+
 ## [0.1.0](https://github.com/sorah/trustless/releases/tag/trustless/v0.1.0) - 2026-03-07
 
 ### Fixed
