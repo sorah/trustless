@@ -11,12 +11,27 @@ pub struct ProviderProcess {
 
 impl ProviderProcess {
     pub async fn spawn(command: &[String]) -> Result<Self, trustless_protocol::error::Error> {
-        let mut child = tokio::process::Command::new(&command[0])
-            .args(&command[1..])
+        let mut cmd = tokio::process::Command::new(&command[0]);
+        cmd.args(&command[1..])
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()?;
+            .stderr(std::process::Stdio::piped());
+
+        // Detach provider from controlling TTY so it cannot read from or open /dev/tty.
+        // TODO: replace with std CommandExt::setsid() when stabilized
+        //       https://github.com/rust-lang/rust/issues/105376
+        #[cfg(unix)]
+        {
+            // SAFETY: setsid() is async-signal-safe
+            unsafe {
+                cmd.pre_exec(|| {
+                    nix::unistd::setsid()?;
+                    Ok(())
+                });
+            }
+        }
+
+        let mut child = cmd.spawn()?;
 
         let stdout = child.stdout.take().expect("stdout is piped");
         let stdin = child.stdin.take().expect("stdin is piped");
