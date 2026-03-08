@@ -80,7 +80,7 @@ N/A by design (Trustless uses remote signing with real domains instead of local 
 
 - cleanup meaningless tests
 - status must show routes first, providers later
-- hardening: limit blob
+- hardening: limit blob, log blob
 - secrecy on Message structs
 - `trustless exec` (`run`) must not reject for ambiguous profiles. Silently pick one
 - `trustless get`
@@ -88,3 +88,4 @@ N/A by design (Trustless uses remote signing with real domains instead of local 
   - inform user to do this in `trustless status` to restart
 - `trustless s` and `trustless l` aliases for `status` and `list`
 - plain http `*.localhost` support
+- `trustless.{any_domain}` should serve active app list and status view

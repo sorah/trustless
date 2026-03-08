@@ -65,7 +65,7 @@ trustless setup -- trustless-provider-filesystem --cert-dir /path/to/certs
 ### 4. Verify
 
 ```bash
-trustless test-provider
+trustless test-provider -- trustless-provider-filesystem --cert-dir /path/to/certs
 ```
 
 ### 5. Run your app
