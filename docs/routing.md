@@ -87,7 +87,7 @@ Once a subdomain label is determined (by either `run` or `exec`), it needs to be
 
 ### Provider selection (`--profile`)
 
-If the proxy has a single provider, it is used automatically. With multiple providers, you must specify which one:
+If the proxy has a single provider, it is used automatically. With multiple providers, the first provider is used by default; use `--profile` to choose a different one:
 
 ```bash
 trustless run --profile=prod-certs rails server

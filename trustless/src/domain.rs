@@ -231,11 +231,7 @@ fn find_nested_wildcard_suffix(
             } else if status.providers.is_empty() {
                 anyhow::bail!("no providers configured");
             } else {
-                let names: Vec<&str> = status.providers.iter().map(|p| p.name.as_str()).collect();
-                anyhow::bail!(
-                    "multiple providers configured ({}); use --profile to select one",
-                    names.join(", ")
-                );
+                &status.providers[0]
             }
         }
     };
@@ -290,11 +286,7 @@ pub(crate) fn resolve_hostname(
             } else if status.providers.is_empty() {
                 anyhow::bail!("no providers configured; run 'trustless setup' first");
             } else {
-                let names: Vec<&str> = status.providers.iter().map(|p| p.name.as_str()).collect();
-                anyhow::bail!(
-                    "multiple providers configured ({}); use --profile to select one",
-                    names.join(", ")
-                );
+                &status.providers[0]
             }
         }
     };
@@ -462,8 +454,10 @@ mod tests {
             make_provider("a", vec!["*.a.invalid"]),
             make_provider("b", vec!["*.b.invalid"]),
         ]);
-        let err = resolve_hostname(&status, "app", None, None).unwrap_err();
-        assert!(err.to_string().contains("--profile"));
+        // Should silently pick the first provider
+        let (hostname, domain) = resolve_hostname(&status, "app", None, None).unwrap();
+        assert_eq!(hostname, "app.a.invalid");
+        assert_eq!(domain, "a.invalid");
     }
 
     #[test]
