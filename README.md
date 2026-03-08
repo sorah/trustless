@@ -13,13 +13,13 @@ Trustless infers a subdomain from your project (directory name, package.json, or
 
 Tools like [Portless](https://github.com/vercel-labs/portless) solve the port-number problem by giving each dev server a stable `.localhost` URL. But `.localhost` is not a registrable domain, so:
 
-- **Same-site cookies don't work** -- `a.localhost` and `b.localhost` are independent sites, not subdomains of a common registrable domain, so `SameSite` cookies can't be shared between services
-- **Secure context requires HTTPS on real domains** -- browsers grant secure context to plain `localhost`, but once you use a registrable domain you need a real TLS certificate
-- **Self-signed certs need trust store changes** -- installing a local CA means modifying system or browser trust stores on every developer's machine
+- **Same-site cookies don't work.** `a.localhost` and `b.localhost` are independent sites, not subdomains of a common registrable domain, so `SameSite` cookies can't be shared between services
+- **Secure context requires HTTPS with trusted certificates.** Browsers grant secure context to plain `localhost`, but once you use a registrable domain, you need a real TLS certificate
+- **Self-signed certs need trust store changes.** Installing a local CA means modifying system or browser trust stores on every developer's machine and poses security risks if not handled carefully.
 
 Trustless fixes this by sharing a publicly trusted certificate through a key provider you deploy once, then every developer on the team gets HTTPS on registrable domains with zero local trust store changes.
 
-__It's noteworthy that sharing a private key is risky!__ But we tolerate by minimizing its risk. By having a key provider in between a locally running HTTPS proxy and actual key materials, we can instantly revoke access when needed.
+__It's noteworthy that sharing a private key is risky!__ We tolerate by minimizing its risk. By having a key provider in between a locally running HTTPS proxy and actual key materials, we can instantly revoke access when needed.
 
 ## How It Works
 
@@ -82,11 +82,12 @@ The proxy auto-starts on first use. Start it explicitly with `trustless proxy st
 ## Security Notice
 
 > [!CAUTION]
-> **You are sharing a private key.** Anyone with access to the key provider can sign TLS handshakes -- which means they can impersonate the domain. Signing is the most important operation of an asymmetric key, and sharing it is inherently risky.
+> **You are sharing a private key.** Anyone with access to the key provider can sign TLS handshakes or any blobs such as JWT -- which means they can impersonate your services. Signing is the most important operation of an asymmetric key, and sharing it is inherently risky.
 >
-> This architecture reduces abuse risk compared to distributing raw key files: access to signing can be revoked instantly by removing provider access, and the key itself is never exported. But while someone has access, they can fully impersonate the domain.
+> Trustless reduces abuse risk compared to distributing raw key files by having a key provider concept: Access to signing can be revoked instantly by removing provider access, and the key itself is never exported. But while someone has access, they can fully impersonate.
 >
-> To limit the blast radius: **use a dedicated domain exclusively for local development** (e.g. `*.lo.mycompany-dev.com`). Never reuse certificates or domains that serve real traffic.
+> To limit the blast radius: **Use a dedicated domain exclusively for local development** (e.g. `*.lo.mycompany-dev.com`). You may want to have a isolated registered domain for this purpose, even avoiding subdomains.
+> Never reuse certificates, keys, or domains that are used for other purposes, such as existing TLS private keys or domains serving real traffic.
 
 ## Routing
 
