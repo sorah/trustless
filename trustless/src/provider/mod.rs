@@ -165,23 +165,37 @@ impl ProviderStatusInfo {
 pub struct ProviderErrorSink {
     registry: registry::ProviderRegistry,
     provider_name: String,
+    stderr_lines: Option<std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>>,
 }
 
 impl ProviderErrorSink {
-    pub fn new(registry: registry::ProviderRegistry, provider_name: String) -> Self {
+    pub fn new(
+        registry: registry::ProviderRegistry,
+        provider_name: String,
+        stderr_lines: Option<std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>>,
+    ) -> Self {
         Self {
             registry,
             provider_name,
+            stderr_lines,
         }
     }
 
     pub fn push(&self, error: ProviderError) {
+        let stderr_snapshot = self.stderr_lines.as_ref().and_then(|lines| {
+            let buf = lines.lock().unwrap();
+            if buf.is_empty() {
+                None
+            } else {
+                Some(buf.iter().cloned().collect())
+            }
+        });
         self.registry.push_error(
             &self.provider_name,
             ProviderErrorReport {
                 timestamp: std::time::SystemTime::now(),
                 error,
-                stderr_snapshot: None,
+                stderr_snapshot,
             },
         );
     }

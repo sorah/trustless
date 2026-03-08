@@ -301,7 +301,11 @@ pub(super) async fn spawn_init_register(
         }
     };
 
-    let error_sink = super::ProviderErrorSink::new(registry.clone(), name.to_owned());
+    let error_sink = super::ProviderErrorSink::new(
+        registry.clone(),
+        name.to_owned(),
+        Some(stderr_lines.clone()),
+    );
     let handle = crate::signer::SigningWorker::start(
         client.clone(),
         std::time::Duration::from_secs(profile.sign_timeout_seconds),
