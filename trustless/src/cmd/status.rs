@@ -108,4 +108,14 @@ fn print_provider(provider: &ProviderStatusInfo) {
             }
         }
     }
+
+    if matches!(
+        provider.state,
+        ProviderState::Restarting | ProviderState::Failed
+    ) {
+        eprintln!(
+            "  {}",
+            "Hint: run `trustless proxy reload` to restart immediately".dimmed()
+        );
+    }
 }

@@ -197,16 +197,31 @@ async fn reload(
         }
     }
 
-    // Unchanged profiles
+    // Unchanged profiles: restart to bypass any backoff
     for name in diff.unchanged {
-        per_provider.insert(
-            name,
-            super::ReloadProviderResult {
-                ok: true,
-                error: None,
-                action: Some("unchanged".to_owned()),
-            },
-        );
+        match state.orchestrator.restart_provider(&name).await {
+            Ok(()) => {
+                per_provider.insert(
+                    name,
+                    super::ReloadProviderResult {
+                        ok: true,
+                        error: None,
+                        action: Some("restarted".to_owned()),
+                    },
+                );
+            }
+            Err(e) => {
+                all_ok = false;
+                per_provider.insert(
+                    name,
+                    super::ReloadProviderResult {
+                        ok: false,
+                        error: Some(e.to_string()),
+                        action: Some("restarted".to_owned()),
+                    },
+                );
+            }
+        }
     }
 
     tracing::info!(ok = all_ok, "reload completed via control API");
