@@ -14,6 +14,8 @@ enum Cli {
     /// List active routes
     #[command(visible_alias = "l")]
     List(trustless::cmd::list::ListArgs),
+    /// Print the URL for a named service
+    Get(trustless::cmd::get::GetArgs),
     /// Show proxy status
     #[command(visible_alias = "s")]
     Status(trustless::cmd::status::StatusArgs),
@@ -52,6 +54,7 @@ fn main() -> Result<std::process::ExitCode, anyhow::Error> {
             enable_log(LogType::Custom);
         }
         Cli::List(_) => enable_log(LogType::Custom),
+        Cli::Get(_) => enable_log(LogType::Custom),
         Cli::Setup(_) => enable_log(LogType::Custom),
         Cli::Route { .. } => enable_log(LogType::Custom),
         Cli::Status(_) => enable_log(LogType::Custom),
@@ -62,6 +65,7 @@ fn main() -> Result<std::process::ExitCode, anyhow::Error> {
 
     let retval = match cli {
         Cli::List(args) => trustless::cmd::list::run(&args),
+        Cli::Get(args) => trustless::cmd::get::run(&args),
         Cli::Setup(args) => trustless::cmd::setup::run(&args),
         Cli::Proxy(cmd) => trustless::cmd::proxy::run(&cmd),
         Cli::Route { command } => trustless::cmd::route::run(&command),

@@ -49,7 +49,7 @@ At parity:
 
 Partial or not yet implemented:
 - `portless list` (show active routes) — partial (`trustless status` shows routes)
-- `portless get <name>` (print URL for service) — **not implemented**
+- `portless get <name>` (print URL for service) — done (`trustless get <name>`)
 - `portless alias <name> <port>` (static route) — partial (`trustless route add/remove` exists)
 - Styled HTML error pages (404, 502, 508) — **not implemented** (plain text only)
 - 404 page showing active routes as index — **not implemented**
