@@ -64,19 +64,6 @@ N/A by design (Trustless uses remote signing with real domains instead of local 
 
 #### Remaining work
 
-##### Error responses & pages
-
-- Error response body should end with `\n`
-- Fancy but minimal HTML pages for humans (detect `Accept: text/html`)
-  - Error pages (502 Bad Gateway, 508 Loop Detected) with troubleshooting hints
-  - 404 / unknown-host page showing active routes as an index
-  - Dark mode, minimal styling (no external assets)
-
-##### CLI UX
-
-- Colored / formatted CLI output (errors in red, URLs highlighted, etc.)
-- `trustless status` — show routes first, providers second (see Misc quality)
-
 ##### Service discovery
 
 - `trustless get <name>` — print URL for a named service (for cross-service wiring, scripts)
@@ -95,8 +82,9 @@ N/A by design (Trustless uses remote signing with real domains instead of local 
 - status must show routes first, providers later
 - hardening: limit blob
 - secrecy on Message structs
-- [x] rename provider-lambda-function to backend-lambda
-- rename provider-filesystem to provider-filesystem
+- `trustless exec` (`run`) must not reject for ambiguous profiles. Silently pick one
 - `trustless get`
-- plain http `*.localhost` support
 - `trustless proxy reload` should trigger immediate restart of all providers regardless of backoff
+  - inform user to do this in `trustless status` to restart
+- `trustless s` and `trustless l` aliases for `status` and `list`
+- plain http `*.localhost` support

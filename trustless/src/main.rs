@@ -12,8 +12,10 @@ enum Cli {
         command: trustless::cmd::route::RouteCommand,
     },
     /// List active routes
+    #[command(visible_alias = "l")]
     List(trustless::cmd::list::ListArgs),
     /// Show proxy status
+    #[command(visible_alias = "s")]
     Status(trustless::cmd::status::StatusArgs),
     /// Test a key provider command
     TestProvider(trustless::cmd::test_provider::TestProviderArgs),
