@@ -67,6 +67,43 @@ pub fn render_502_page(backend: std::net::SocketAddr, error_detail: &str) -> Str
     .expect("render 502.html")
 }
 
+/// Provider error with a pre-computed relative timestamp for templates.
+#[derive(serde::Serialize)]
+struct ErrorPageError {
+    kind: String,
+    message: String,
+    timestamp_relative: String,
+}
+
+/// Provider info with enriched errors for template rendering.
+#[derive(serde::Serialize)]
+struct ErrorPageProvider {
+    name: String,
+    state: String,
+    certificates: Vec<crate::provider::CertificateStatusInfo>,
+    errors: Vec<ErrorPageError>,
+}
+
+fn enrich_providers(providers: &[crate::provider::ProviderStatusInfo]) -> Vec<ErrorPageProvider> {
+    providers
+        .iter()
+        .map(|p| ErrorPageProvider {
+            name: p.name.clone(),
+            state: p.state.to_string(),
+            certificates: p.certificates.clone(),
+            errors: p
+                .errors
+                .iter()
+                .map(|e| ErrorPageError {
+                    kind: e.error.kind.to_string(),
+                    message: e.error.message.clone(),
+                    timestamp_relative: crate::provider::format_relative_time(e.timestamp),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
 pub fn render_status_page(status: &crate::control::StatusResponse) -> String {
     let routes: Vec<ErrorPageRouteEntry> = {
         let mut sorted: Vec<_> = status.routes.iter().collect();
@@ -80,6 +117,8 @@ pub fn render_status_page(status: &crate::control::StatusResponse) -> String {
             .collect()
     };
 
+    let providers = enrich_providers(&status.providers);
+
     let env = engine();
     let tmpl = env.get_template("status.html").unwrap();
     tmpl.render(minijinja::context! {
@@ -88,7 +127,7 @@ pub fn render_status_page(status: &crate::control::StatusResponse) -> String {
         status_text => "trustless",
         pid => status.pid,
         port => status.port,
-        providers => &status.providers,
+        providers => providers,
         routes => routes,
         arrow_svg => minijinja::Value::from_safe_string(ARROW_SVG.to_string()),
     })

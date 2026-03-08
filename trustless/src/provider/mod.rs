@@ -16,17 +16,26 @@ pub enum ProviderErrorKind {
     Crash,
     InitFailure,
     ProtocolError,
+    SignFailure,
 }
 
+/// The error payload: what went wrong.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ProviderError {
+    pub kind: ProviderErrorKind,
+    pub message: String,
+}
+
+/// A timestamped error report stored in the ring buffer.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ProviderErrorReport {
     #[serde(
         serialize_with = "serialize_system_time",
         deserialize_with = "deserialize_system_time"
     )]
     pub timestamp: std::time::SystemTime,
-    pub kind: ProviderErrorKind,
-    pub message: String,
+    #[serde(flatten)]
+    pub error: ProviderError,
     pub stderr_snapshot: Option<Vec<String>>,
 }
 
@@ -71,6 +80,7 @@ impl std::fmt::Display for ProviderErrorKind {
             Self::Crash => write!(f, "crash"),
             Self::InitFailure => write!(f, "init_failure"),
             Self::ProtocolError => write!(f, "protocol_error"),
+            Self::SignFailure => write!(f, "sign_failure"),
         }
     }
 }
@@ -93,7 +103,7 @@ pub struct ProviderStatusInfo {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub command: Vec<String>,
     pub certificates: Vec<CertificateStatusInfo>,
-    pub errors: Vec<ProviderError>,
+    pub errors: Vec<ProviderErrorReport>,
 }
 
 /// Format a `SystemTime` as a human-friendly relative time string (e.g. "5s ago", "2m ago").
@@ -125,13 +135,13 @@ impl ProviderStatusInfo {
                 shell_words::join(&self.command)
             }
         ));
-        if let Some(error) = self.errors.last() {
-            let ts = format_relative_time(error.timestamp);
+        if let Some(report) = self.errors.last() {
+            let ts = format_relative_time(report.timestamp);
             out.push_str(&format!(
                 "trustless: note: last error ({}) [{}]: {}\n",
-                error.kind, ts, error.message
+                report.error.kind, ts, report.error.message
             ));
-            if let Some(ref lines) = error.stderr_snapshot {
+            if let Some(ref lines) = report.stderr_snapshot {
                 let total = lines.len();
                 let skip = total.saturating_sub(stderr_lines);
                 if skip > 0 {
@@ -144,6 +154,36 @@ impl ProviderStatusInfo {
         }
         out.push_str("trustless: note: run `trustless status` for details\n");
         out
+    }
+}
+
+// --- ProviderErrorSink ---
+
+/// A handle for pushing errors into a provider's error ring buffer.
+/// Intentionally general-purpose — not tied to any specific operation kind.
+#[derive(Clone)]
+pub struct ProviderErrorSink {
+    registry: registry::ProviderRegistry,
+    provider_name: String,
+}
+
+impl ProviderErrorSink {
+    pub fn new(registry: registry::ProviderRegistry, provider_name: String) -> Self {
+        Self {
+            registry,
+            provider_name,
+        }
+    }
+
+    pub fn push(&self, error: ProviderError) {
+        self.registry.push_error(
+            &self.provider_name,
+            ProviderErrorReport {
+                timestamp: std::time::SystemTime::now(),
+                error,
+                stderr_snapshot: None,
+            },
+        );
     }
 }
 

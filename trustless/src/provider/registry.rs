@@ -1,4 +1,4 @@
-use super::{ProviderError, ProviderState};
+use super::{ProviderErrorReport, ProviderState};
 use crate::signer::{RemoteSigningKey, SigningHandle};
 
 const ERROR_RING_CAPACITY: usize = 10;
@@ -21,7 +21,7 @@ struct ProviderEntry {
     certificates: Vec<CertResolverEntry>,
     default_id: Option<String>,
     state: ProviderState,
-    errors: std::collections::VecDeque<ProviderError>,
+    errors: std::collections::VecDeque<ProviderErrorReport>,
 }
 
 struct CertResolverEntry {
@@ -169,7 +169,7 @@ impl ProviderRegistry {
         inner.providers.get(name).map(|e| e.state.clone())
     }
 
-    pub fn push_error(&self, name: &str, error: ProviderError) {
+    pub fn push_error(&self, name: &str, error: ProviderErrorReport) {
         let mut inner = self.inner.write().unwrap();
         if let Some(entry) = inner.providers.get_mut(name) {
             if entry.errors.len() >= ERROR_RING_CAPACITY {
@@ -179,7 +179,7 @@ impl ProviderRegistry {
         }
     }
 
-    pub fn errors(&self, name: &str) -> Vec<ProviderError> {
+    pub fn errors(&self, name: &str) -> Vec<ProviderErrorReport> {
         let inner = self.inner.read().unwrap();
         inner
             .providers
@@ -428,7 +428,7 @@ pub(crate) fn matches_sni(sni: &str, domains: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::ProviderErrorKind;
+    use crate::provider::{ProviderError, ProviderErrorKind, ProviderErrorReport};
 
     #[test]
     fn wildcard_matches_single_label() {
@@ -554,10 +554,12 @@ mod tests {
         for i in 0..15 {
             registry.push_error(
                 "test",
-                ProviderError {
+                ProviderErrorReport {
                     timestamp: std::time::SystemTime::now(),
-                    kind: ProviderErrorKind::Crash,
-                    message: format!("error {i}"),
+                    error: ProviderError {
+                        kind: ProviderErrorKind::Crash,
+                        message: format!("error {i}"),
+                    },
                     stderr_snapshot: None,
                 },
             );
@@ -565,22 +567,24 @@ mod tests {
 
         let errors = registry.errors("test");
         assert_eq!(errors.len(), ERROR_RING_CAPACITY);
-        assert_eq!(errors[0].message, "error 5");
-        assert_eq!(errors[9].message, "error 14");
+        assert_eq!(errors[0].error.message, "error 5");
+        assert_eq!(errors[9].error.message, "error 14");
     }
 
     #[test]
     fn error_entry_fields() {
-        let error = ProviderError {
+        let report = ProviderErrorReport {
             timestamp: std::time::SystemTime::now(),
-            kind: ProviderErrorKind::InitFailure,
-            message: "init failed".to_owned(),
+            error: ProviderError {
+                kind: ProviderErrorKind::InitFailure,
+                message: "init failed".to_owned(),
+            },
             stderr_snapshot: Some(vec!["line1".to_owned(), "line2".to_owned()]),
         };
 
-        assert!(matches!(error.kind, ProviderErrorKind::InitFailure));
-        assert_eq!(error.message, "init failed");
-        assert_eq!(error.stderr_snapshot.as_ref().unwrap().len(), 2);
+        assert!(matches!(report.error.kind, ProviderErrorKind::InitFailure));
+        assert_eq!(report.error.message, "init failed");
+        assert_eq!(report.stderr_snapshot.as_ref().unwrap().len(), 2);
     }
 
     #[test]

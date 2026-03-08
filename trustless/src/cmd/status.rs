@@ -112,8 +112,8 @@ fn print_provider(provider: &ProviderStatusInfo, all_errors: bool) {
             eprintln!(
                 "    {} {}: {}",
                 format!("[{ts}]").dimmed(),
-                error.kind,
-                error.message
+                error.error.kind,
+                error.error.message
             );
             if let Some(ref lines) = error.stderr_snapshot {
                 for line in lines {

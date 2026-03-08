@@ -13,14 +13,24 @@ impl SigningWorker {
     pub fn start(
         client: std::sync::Arc<crate::provider::process::ProviderClient>,
         sign_timeout: std::time::Duration,
+        error_sink: Option<crate::provider::ProviderErrorSink>,
     ) -> SigningHandle {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SignRequest>();
 
+        let task_sink = error_sink.clone();
         tokio::spawn(async move {
             while let Some(req) = rx.recv().await {
                 let result = client
                     .sign(&req.certificate_id, &req.scheme, &req.blob)
                     .await;
+                if let Err(ref e) = result
+                    && let Some(ref sink) = task_sink
+                {
+                    sink.push(crate::provider::ProviderError {
+                        kind: crate::provider::ProviderErrorKind::SignFailure,
+                        message: format!("sign failed (cert={}): {e}", req.certificate_id),
+                    });
+                }
                 let mapped =
                     result.map_err(|e| rustls::Error::General(format!("remote sign failed: {e}")));
                 // Ignore send error — caller may have dropped
@@ -31,6 +41,7 @@ impl SigningWorker {
         SigningHandle {
             tx,
             timeout: sign_timeout,
+            error_sink,
         }
     }
 }
@@ -39,6 +50,7 @@ impl SigningWorker {
 pub struct SigningHandle {
     tx: tokio::sync::mpsc::UnboundedSender<SignRequest>,
     timeout: std::time::Duration,
+    error_sink: Option<crate::provider::ProviderErrorSink>,
 }
 
 impl std::fmt::Debug for SigningHandle {
@@ -55,6 +67,7 @@ impl SigningHandle {
         Self {
             tx,
             timeout: std::time::Duration::from_secs(1),
+            error_sink: None,
         }
     }
 
@@ -73,6 +86,12 @@ impl SigningHandle {
         };
         self.tx.send(req).map_err(|_| {
             tracing::error!(certificate_id = %certificate_id, "signing worker gone, cannot sign");
+            if let Some(ref sink) = self.error_sink {
+                sink.push(crate::provider::ProviderError {
+                    kind: crate::provider::ProviderErrorKind::SignFailure,
+                    message: format!("signing worker gone (cert={certificate_id})"),
+                });
+            }
             rustls::Error::General("remote sign failed: signing worker gone".to_owned())
         })?;
         tokio::task::block_in_place(|| {
@@ -81,12 +100,27 @@ impl SigningHandle {
                     Ok(Ok(result)) => result,
                     Ok(Err(_)) => {
                         tracing::error!(certificate_id = %certificate_id, "signing worker gone, cannot sign");
+                        if let Some(ref sink) = self.error_sink {
+                            sink.push(crate::provider::ProviderError {
+                                kind: crate::provider::ProviderErrorKind::SignFailure,
+                                message: format!("signing worker gone (cert={certificate_id})"),
+                            });
+                        }
                         Err(rustls::Error::General(
                             "remote sign failed: signing worker gone".to_owned(),
                         ))
                     }
                     Err(_) => {
                         tracing::warn!(certificate_id = %certificate_id, timeout_secs = self.timeout.as_secs(), "remote sign timed out");
+                        if let Some(ref sink) = self.error_sink {
+                            sink.push(crate::provider::ProviderError {
+                                kind: crate::provider::ProviderErrorKind::SignFailure,
+                                message: format!(
+                                    "sign timed out after {}s (cert={certificate_id})",
+                                    self.timeout.as_secs(),
+                                ),
+                            });
+                        }
                         Err(rustls::Error::General(format!(
                             "remote sign failed: timed out after {}s",
                             self.timeout.as_secs(),

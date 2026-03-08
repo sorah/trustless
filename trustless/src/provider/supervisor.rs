@@ -1,6 +1,6 @@
 use super::orchestrator::{SpawnError, SpawnResult, SupervisorCommand, spawn_init_register};
 use super::registry::ProviderRegistry;
-use super::{ProviderError, ProviderErrorKind, ProviderState};
+use super::{ProviderError, ProviderErrorKind, ProviderErrorReport, ProviderState};
 
 pub(super) struct Supervisor {
     pub(super) name: String,
@@ -83,10 +83,12 @@ impl Supervisor {
             .set_provider_state(&self.name, ProviderState::Restarting);
         self.registry.push_error(
             &self.name,
-            ProviderError {
+            ProviderErrorReport {
                 timestamp: std::time::SystemTime::now(),
-                kind: ProviderErrorKind::Crash,
-                message: exit_msg,
+                error: ProviderError {
+                    kind: ProviderErrorKind::Crash,
+                    message: exit_msg,
+                },
                 stderr_snapshot: Some(stderr_snapshot),
             },
         );
@@ -210,10 +212,12 @@ impl Supervisor {
     fn record_spawn_failure(&self, context: &str, stderr_snapshot: Option<Vec<String>>) {
         self.registry.push_error(
             &self.name,
-            ProviderError {
+            ProviderErrorReport {
                 timestamp: std::time::SystemTime::now(),
-                kind: ProviderErrorKind::InitFailure,
-                message: context.to_owned(),
+                error: ProviderError {
+                    kind: ProviderErrorKind::InitFailure,
+                    message: context.to_owned(),
+                },
                 stderr_snapshot,
             },
         );
@@ -255,10 +259,12 @@ pub(super) async fn run_recovering(
                             Err(spawn_err) => {
                                 registry.push_error(
                                     &name,
-                                    ProviderError {
+                                    ProviderErrorReport {
                                         timestamp: std::time::SystemTime::now(),
-                                        kind: ProviderErrorKind::InitFailure,
-                                        message: format!("manual restart failed: {}", spawn_err.error),
+                                        error: ProviderError {
+                                            kind: ProviderErrorKind::InitFailure,
+                                            message: format!("manual restart failed: {}", spawn_err.error),
+                                        },
                                         stderr_snapshot: spawn_err.stderr_snapshot,
                                     },
                                 );
@@ -283,10 +289,12 @@ pub(super) async fn run_recovering(
                 tracing::error!(provider = %name, "respawn failed: {}", spawn_err.error);
                 registry.push_error(
                     &name,
-                    ProviderError {
+                    ProviderErrorReport {
                         timestamp: std::time::SystemTime::now(),
-                        kind: ProviderErrorKind::InitFailure,
-                        message: format!("respawn failed: {}", spawn_err.error),
+                        error: ProviderError {
+                            kind: ProviderErrorKind::InitFailure,
+                            message: format!("respawn failed: {}", spawn_err.error),
+                        },
                         stderr_snapshot: spawn_err.stderr_snapshot,
                     },
                 );

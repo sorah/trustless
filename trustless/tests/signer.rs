@@ -78,6 +78,7 @@ async fn spawn_provider_and_resolve_sni() {
     let handle = trustless::signer::SigningWorker::start(
         client.clone(),
         std::time::Duration::from_secs(trustless::config::default_sign_timeout_seconds()),
+        None,
     );
 
     let init = client.initialize().await.unwrap();
@@ -120,6 +121,7 @@ async fn full_tls_handshake() {
     let handle = trustless::signer::SigningWorker::start(
         client.clone(),
         std::time::Duration::from_secs(trustless::config::default_sign_timeout_seconds()),
+        None,
     );
 
     let init = client.initialize().await.unwrap();

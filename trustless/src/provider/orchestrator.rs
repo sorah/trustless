@@ -74,10 +74,12 @@ impl ProviderOrchestrator {
                     .register_placeholder(name, super::ProviderState::Restarting);
                 self.inner.registry.push_error(
                     name,
-                    super::ProviderError {
+                    super::ProviderErrorReport {
                         timestamp: std::time::SystemTime::now(),
-                        kind: super::ProviderErrorKind::InitFailure,
-                        message: format!("initial startup failed: {}", spawn_err.error),
+                        error: super::ProviderError {
+                            kind: super::ProviderErrorKind::InitFailure,
+                            message: format!("initial startup failed: {}", spawn_err.error),
+                        },
                         stderr_snapshot: spawn_err.stderr_snapshot,
                     },
                 );
@@ -299,9 +301,11 @@ pub(super) async fn spawn_init_register(
         }
     };
 
+    let error_sink = super::ProviderErrorSink::new(registry.clone(), name.to_owned());
     let handle = crate::signer::SigningWorker::start(
         client.clone(),
         std::time::Duration::from_secs(profile.sign_timeout_seconds),
+        Some(error_sink),
     );
 
     registry

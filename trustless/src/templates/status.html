@@ -74,7 +74,7 @@
       {% if p.errors %}
       <div class="error-list">
         {% for error in p.errors %}
-        <div class="error-item"><span class="kind">{{ error.kind }}</span>: {{ error.message }}</div>
+        <div class="error-item"><span class="dimmed">[{{ error.timestamp_relative }}]</span> <span class="kind">{{ error.kind }}</span>: {{ error.message }}</div>
         {% endfor %}
       </div>
       {% endif %}

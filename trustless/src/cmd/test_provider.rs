@@ -94,6 +94,7 @@ pub async fn run(args: &TestProviderArgs) -> Result<(), anyhow::Error> {
     let handle = crate::signer::SigningWorker::start(
         client.clone(),
         std::time::Duration::from_secs(crate::config::default_sign_timeout_seconds()),
+        None,
     );
     let registry = crate::provider::ProviderRegistry::new();
     registry.add_provider(init, handle)?;
