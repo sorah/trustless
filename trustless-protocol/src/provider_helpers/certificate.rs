@@ -77,17 +77,17 @@ impl Certificate {
         key_pem: &[u8],
         passphrase: Option<&str>,
     ) -> Result<Self, ProviderHelperError> {
-        if let Some(passphrase) = passphrase {
-            if let Some(key_der_bytes) = super::decrypt_key_if_encrypted(key_pem, passphrase)? {
-                let domains = dns_sans_from_pem(&fullchain_pem)?;
-                let key_der =
-                    rustls_pki_types::PrivateKeyDer::try_from(key_der_bytes).map_err(|e| {
-                        ProviderHelperError::KeyDecryption(format!(
-                            "failed to parse decrypted key DER: {e}"
-                        ))
-                    })?;
-                return Self::from_pem_and_key_der(id, fullchain_pem, domains, key_der);
-            }
+        if let Some(passphrase) = passphrase
+            && let Some(key_der_bytes) = super::decrypt_key_if_encrypted(key_pem, passphrase)?
+        {
+            let domains = dns_sans_from_pem(&fullchain_pem)?;
+            let key_der =
+                rustls_pki_types::PrivateKeyDer::try_from(key_der_bytes).map_err(|e| {
+                    ProviderHelperError::KeyDecryption(format!(
+                        "failed to parse decrypted key DER: {e}"
+                    ))
+                })?;
+            return Self::from_pem_and_key_der(id, fullchain_pem, domains, key_der);
         }
         Self::from_pem(id, fullchain_pem, key_pem)
     }
