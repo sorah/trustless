@@ -14,6 +14,8 @@
 //!
 //! Use [`client::ProviderClient`] to communicate with a spawned provider process.
 
+/// Base64-serializable byte types for use with [`secrecy::SecretBox`].
+pub mod base64;
 /// Async client for communicating with a key provider process.
 pub mod client;
 /// Length-delimited codec for framing and serializing messages.

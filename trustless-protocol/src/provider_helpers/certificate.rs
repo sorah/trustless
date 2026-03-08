@@ -1,3 +1,5 @@
+use secrecy::ExposeSecret as _;
+
 use super::ProviderHelperError;
 
 /// A loaded certificate with its signing key and metadata.
@@ -142,10 +144,12 @@ impl Certificate {
             })?;
 
         let signature = signer
-            .sign(&params.blob)
+            .sign(params.blob.expose_secret())
             .map_err(|e| ProviderHelperError::SigningFailed(format!("signing failed: {e}")))?;
 
-        Ok(crate::message::SignResult { signature })
+        Ok(crate::message::SignResult {
+            signature: crate::message::Base64Bytes::from(signature).into_secret(),
+        })
     }
 
     /// Build a `CertificateInfo` protocol message from this certificate.
@@ -234,10 +238,10 @@ mod tests {
         let params = crate::message::SignParams {
             certificate_id: "test/v1".to_owned(),
             scheme: scheme_name.to_owned(),
-            blob: vec![1, 2, 3, 4],
+            blob: crate::message::Base64Bytes::from(vec![1, 2, 3, 4]).into_secret(),
         };
         let result = cert.sign(&params).unwrap();
-        assert!(!result.signature.is_empty());
+        assert!(!result.signature.expose_secret().is_empty());
     }
 
     #[test]
@@ -248,7 +252,7 @@ mod tests {
         let params = crate::message::SignParams {
             certificate_id: "test/v1".to_owned(),
             scheme: "NONEXISTENT_SCHEME".to_owned(),
-            blob: vec![1, 2, 3],
+            blob: crate::message::Base64Bytes::from(vec![1, 2, 3]).into_secret(),
         };
         let err = cert.sign(&params).unwrap_err();
         assert!(matches!(err, ProviderHelperError::UnsupportedScheme(_)));

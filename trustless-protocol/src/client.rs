@@ -1,3 +1,5 @@
+use secrecy::ExposeSecret as _;
+
 /// Async client for communicating with a key provider process.
 ///
 /// Thread-safe via an interior `Mutex` — multiple tasks can share a single client,
@@ -71,7 +73,7 @@ where
                 params: crate::message::SignParams {
                     certificate_id,
                     scheme,
-                    blob,
+                    blob: crate::message::Base64Bytes::from(blob).into_secret(),
                 },
             })
             .await?;
@@ -79,7 +81,7 @@ where
             crate::message::Response::Success(crate::message::SuccessResponse::Sign {
                 result,
                 ..
-            }) => Ok(result.signature),
+            }) => Ok(result.signature.expose_secret().to_vec()),
             crate::message::Response::Success(_) => {
                 Err(crate::error::Error::UnexpectedResponseMethod)
             }

@@ -10,6 +10,7 @@ trustless = { version = "0.1.0", path = "../trustless" }
 trustless-protocol.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+secrecy.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

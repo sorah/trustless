@@ -186,6 +186,8 @@ pub(crate) fn new_app_state(
 
 #[cfg(test)]
 mod tests {
+    use secrecy::ExposeSecret as _;
+
     use super::*;
     use aws_smithy_mocks::{RuleMode, mock, mock_client};
 
@@ -404,12 +406,13 @@ mod tests {
             .sign(&trustless_protocol::message::SignParams {
                 certificate_id: "cert-v1".to_owned(),
                 scheme,
-                blob: vec![1, 2, 3, 4],
+                blob: trustless_protocol::message::Base64Bytes::from(vec![1, 2, 3, 4])
+                    .into_secret(),
             })
             .await
             .unwrap();
 
-        assert!(!sign_result.signature.is_empty());
+        assert!(!sign_result.signature.expose_secret().is_empty());
     }
 
     #[tokio::test]
@@ -437,7 +440,7 @@ mod tests {
             .sign(&trustless_protocol::message::SignParams {
                 certificate_id: "nonexistent".to_owned(),
                 scheme: "ECDSA_NISTP256_SHA256".to_owned(),
-                blob: vec![1, 2, 3],
+                blob: trustless_protocol::message::Base64Bytes::from(vec![1, 2, 3]).into_secret(),
             })
             .await
             .unwrap_err();
@@ -482,7 +485,7 @@ mod tests {
             .sign(&trustless_protocol::message::SignParams {
                 certificate_id: "cert-v1".to_owned(),
                 scheme: "NONEXISTENT_SCHEME".to_owned(),
-                blob: vec![1, 2, 3],
+                blob: trustless_protocol::message::Base64Bytes::from(vec![1, 2, 3]).into_secret(),
             })
             .await
             .unwrap_err();

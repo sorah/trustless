@@ -49,6 +49,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use secrecy::ExposeSecret as _;
+
     #[tokio::test]
     async fn round_trip_message() {
         let (client, server) = tokio::io::duplex(4096);
@@ -126,7 +128,7 @@ mod tests {
                 params: crate::message::SignParams {
                     certificate_id: format!("cert{i}"),
                     scheme: "ECDSA_NISTP256_SHA256".to_owned(),
-                    blob: vec![i as u8; 16],
+                    blob: crate::message::Base64Bytes::from(vec![i as u8; 16]).into_secret(),
                 },
             };
             super::send_message(&mut writer, &req).await.unwrap();
@@ -138,7 +140,10 @@ mod tests {
             match &received {
                 crate::message::Request::Sign { params, .. } => {
                     assert_eq!(params.certificate_id, format!("cert{i}"));
-                    assert_eq!(params.blob, vec![i as u8; 16]);
+                    assert_eq!(
+                        params.blob.expose_secret().as_slice(),
+                        vec![i as u8; 16].as_slice()
+                    );
                 }
                 _ => panic!("expected Sign"),
             }

@@ -1,3 +1,5 @@
+use secrecy::ExposeSecret as _;
+
 struct TestHandler;
 
 impl trustless_protocol::handler::Handler for TestHandler {
@@ -22,9 +24,11 @@ impl trustless_protocol::handler::Handler for TestHandler {
     ) -> Result<trustless_protocol::message::SignResult, trustless_protocol::message::ErrorCode>
     {
         if params.certificate_id == "test/v1" {
-            let mut sig = params.blob.clone();
+            let mut sig = params.blob.expose_secret().to_vec();
             sig.reverse();
-            Ok(trustless_protocol::message::SignResult { signature: sig })
+            Ok(trustless_protocol::message::SignResult {
+                signature: trustless_protocol::message::Base64Bytes::from(sig).into_secret(),
+            })
         } else {
             Err(trustless_protocol::message::ErrorCode::CertificateNotFound(
                 format!("unknown cert: {}", params.certificate_id),
@@ -115,7 +119,8 @@ async fn handler_round_trip() {
             params: trustless_protocol::message::SignParams {
                 certificate_id: "test/v1".to_owned(),
                 scheme: "ECDSA_NISTP256_SHA256".to_owned(),
-                blob: vec![1, 2, 3, 4],
+                blob: trustless_protocol::message::Base64Bytes::from(vec![1, 2, 3, 4])
+                    .into_secret(),
             },
         };
         trustless_protocol::codec::send_message(&mut writer, &req)
@@ -130,7 +135,7 @@ async fn handler_round_trip() {
             trustless_protocol::message::Response::Success(
                 trustless_protocol::message::SuccessResponse::Sign { result, .. },
             ) => {
-                assert_eq!(result.signature, vec![4, 3, 2, 1]);
+                assert_eq!(result.signature.expose_secret().as_slice(), &[4, 3, 2, 1]);
             }
             _ => panic!("expected Sign Result"),
         }
@@ -141,7 +146,7 @@ async fn handler_round_trip() {
             params: trustless_protocol::message::SignParams {
                 certificate_id: "nonexistent".to_owned(),
                 scheme: "ECDSA_NISTP256_SHA256".to_owned(),
-                blob: vec![0xff],
+                blob: trustless_protocol::message::Base64Bytes::from(vec![0xff]).into_secret(),
             },
         };
         trustless_protocol::codec::send_message(&mut writer, &req)

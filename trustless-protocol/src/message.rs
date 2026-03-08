@@ -1,4 +1,6 @@
-use serde_with::serde_as;
+use secrecy::SecretBox;
+
+pub use crate::base64::Base64Bytes;
 
 /// Protocol error code with message.
 ///
@@ -90,16 +92,15 @@ impl Request {
 pub struct InitializeParams {}
 
 /// Parameters for the `sign` method.
-#[serde_as]
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct SignParams {
     /// The certificate ID (from [`InitializeResult`]) identifying which key to use.
     pub certificate_id: String,
     /// The signature scheme name (e.g., `"ECDSA_NISTP256_SHA256"`).
     pub scheme: String,
-    /// The data to sign. Base64-encoded on the wire.
-    #[serde_as(as = "serde_with::base64::Base64")]
-    pub blob: Vec<u8>,
+    /// The data to sign. Base64-encoded on the wire. Blobs to sign are not considered sensitive,
+    /// but we wrap them with `SecretBox` to avoid accidental logging or exposure in debug builds.
+    pub blob: SecretBox<Base64Bytes>,
 }
 
 /// A successful protocol response, internally tagged by `method`.
@@ -200,16 +201,16 @@ pub struct CertificateInfo {
 }
 
 /// Result of the `sign` method.
-#[serde_with::serde_as]
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct SignResult {
     /// The signature bytes. Base64-encoded on the wire.
-    #[serde_as(as = "serde_with::base64::Base64")]
-    pub signature: Vec<u8>,
+    pub signature: SecretBox<Base64Bytes>,
 }
 
 #[cfg(test)]
 mod tests {
+    use secrecy::ExposeSecret as _;
+
     #[derive(serde::Deserialize, Debug)]
     struct WireRequest {
         id: u64,
@@ -237,7 +238,7 @@ mod tests {
             params: super::SignParams {
                 certificate_id: "cert/v1".to_owned(),
                 scheme: "ECDSA_NISTP256_SHA256".to_owned(),
-                blob: vec![0xde, 0xad, 0xbe, 0xef],
+                blob: super::Base64Bytes::from(vec![0xde, 0xad, 0xbe, 0xef]).into_secret(),
             },
         };
         let json = serde_json::to_string(&req).unwrap();
@@ -247,7 +248,7 @@ mod tests {
         let params: super::SignParams = serde_json::from_value(wire.params).unwrap();
         assert_eq!(params.certificate_id, "cert/v1");
         assert_eq!(params.scheme, "ECDSA_NISTP256_SHA256");
-        assert_eq!(params.blob, vec![0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(**params.blob.expose_secret(), vec![0xde, 0xad, 0xbe, 0xef]);
     }
 
     #[test]
@@ -267,7 +268,7 @@ mod tests {
             super::Request::Sign { params, .. } => {
                 assert_eq!(params.certificate_id, "c1");
                 assert_eq!(params.scheme, "ED25519");
-                assert_eq!(params.blob, vec![1, 2, 3]);
+                assert_eq!(params.blob.expose_secret().as_slice(), &[1, 2, 3]);
             }
             _ => panic!("expected Sign"),
         }
@@ -280,7 +281,7 @@ mod tests {
             params: super::SignParams {
                 certificate_id: "cert/v1".to_owned(),
                 scheme: "ECDSA_NISTP256_SHA256".to_owned(),
-                blob: vec![0xde, 0xad],
+                blob: super::Base64Bytes::from(vec![0xde, 0xad]).into_secret(),
             },
         };
         let json = serde_json::to_string(&req).unwrap();
@@ -289,7 +290,7 @@ mod tests {
         match decoded {
             super::Request::Sign { params, .. } => {
                 assert_eq!(params.certificate_id, "cert/v1");
-                assert_eq!(params.blob, vec![0xde, 0xad]);
+                assert_eq!(params.blob.expose_secret().as_slice(), &[0xde, 0xad]);
             }
             _ => panic!("expected Sign"),
         }
@@ -324,7 +325,7 @@ mod tests {
         let resp = super::Response::Success(super::SuccessResponse::Sign {
             id: 2,
             result: super::SignResult {
-                signature: vec![0xff, 0x00, 0xab],
+                signature: super::Base64Bytes::from(vec![0xff, 0x00, 0xab]).into_secret(),
             },
         });
         let json = serde_json::to_string(&resp).unwrap();
@@ -385,11 +386,14 @@ mod tests {
         let params = super::SignParams {
             certificate_id: "x".to_owned(),
             scheme: "RSA_PSS_SHA256".to_owned(),
-            blob: (0..=255).collect(),
+            blob: super::Base64Bytes::from((0..=255).collect::<Vec<u8>>()).into_secret(),
         };
         let json = serde_json::to_string(&params).unwrap();
         let decoded: super::SignParams = serde_json::from_str(&json).unwrap();
-        assert_eq!(decoded.blob, params.blob);
+        assert_eq!(
+            decoded.blob.expose_secret().as_slice(),
+            params.blob.expose_secret().as_slice()
+        );
     }
 
     #[test]

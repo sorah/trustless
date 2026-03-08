@@ -1,4 +1,5 @@
 use clap::Parser as _;
+use secrecy::ExposeSecret as _;
 
 /// A failure-injecting proxy provider for testing.
 ///
@@ -57,10 +58,16 @@ impl trustless_protocol::handler::Handler for FailureProxy {
         }
         let signature = self
             .client
-            .sign(&params.certificate_id, &params.scheme, &params.blob)
+            .sign(
+                &params.certificate_id,
+                &params.scheme,
+                params.blob.expose_secret(),
+            )
             .await
             .map_err(|e| trustless_protocol::message::ErrorCode::Internal(e.to_string()))?;
-        Ok(trustless_protocol::message::SignResult { signature })
+        Ok(trustless_protocol::message::SignResult {
+            signature: trustless_protocol::message::Base64Bytes::from(signature).into_secret(),
+        })
     }
 }
 

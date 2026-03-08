@@ -23,7 +23,9 @@ cipher = { version = "0.4", features = ["alloc", "block-padding"], optional = tr
 md-5 = { version = "0.10", optional = true }
 base64ct = { version = "1", features = ["alloc"], optional = true }
 futures-util = { version = "0.3", features = ["sink"] }
+secrecy.workspace = true
 serde.workspace = true
+zeroize.workspace = true
 serde_json.workspace = true
 serde_with = { version = "3", features = ["base64"] }
 thiserror.workspace = true

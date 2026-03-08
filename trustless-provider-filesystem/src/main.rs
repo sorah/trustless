@@ -142,6 +142,8 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use secrecy::ExposeSecret as _;
+
     use super::*;
 
     fn setup_cert_dir(domain_dir: &str, version: &str, sans: Vec<String>) -> tempfile::TempDir {
@@ -218,12 +220,13 @@ mod tests {
             .sign(&trustless_protocol::message::SignParams {
                 certificate_id: "example.com/v1".to_owned(),
                 scheme,
-                blob: vec![1, 2, 3, 4],
+                blob: trustless_protocol::message::Base64Bytes::from(vec![1, 2, 3, 4])
+                    .into_secret(),
             })
             .await
             .unwrap();
 
-        assert!(!sign_result.signature.is_empty());
+        assert!(!sign_result.signature.expose_secret().is_empty());
     }
 
     #[test]
