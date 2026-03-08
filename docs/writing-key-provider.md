@@ -99,6 +99,8 @@ Key points:
 - `scheme` specifies exactly which signature scheme to use
 - The provider must use the requested scheme; rejecting unsupported schemes with an error is correct behavior
 
+> **Note:** Providers using `trustless-protocol`'s `provider_helpers` have a built-in blob check that validates blobs look like TLS 1.3 server CertificateVerify messages before signing. See [Blob Validation](#blob-validation) below for details.
+
 ### Error Response
 
 If something goes wrong, return an error instead of a result:
@@ -270,6 +272,36 @@ The following scheme names are recognized:
 | `ED448` | EdDSA |
 
 All schemes declared for a single certificate must share the same algorithm family (e.g., all RSA or all ECDSA). Certificates with mixed algorithm families are rejected during registration.
+
+## Blob Validation
+
+Providers built with `trustless-protocol`'s `provider_helpers` (including `trustless-provider-filesystem` and `trustless-backend-lambda`) automatically validate that incoming sign blobs look like TLS 1.3 **server** CertificateVerify messages before signing. This is a defense-in-depth measure — it ensures the provider only signs legitimate TLS handshake data.
+
+The check verifies:
+- The blob starts with 64 bytes of `0x20` (the TLS 1.3 padding)
+- Followed by the server context string `"TLS 1.3, server CertificateVerify\0"`
+- Followed by a handshake hash
+
+Client CertificateVerify blobs are rejected because Trustless only operates as a TLS server. Non-TLS-1.3 blobs (including TLS 1.2 ServerKeyExchange blobs) are also rejected. See [tls12.md](tls12.md) for TLS 1.2 implications.
+
+### Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRUSTLESS_DISABLE_BLOB_CHECK_TLS=1` | check enabled | Disables the TLS blob check, allowing any blob to be signed. Required if you enable TLS 1.2 on the proxy (`--tls12`). |
+| `TRUSTLESS_LOG_BLOB=1` | logging disabled | Logs the hex-encoded blob contents before signing via `tracing::info!`. Useful for debugging handshake issues. |
+
+> **Important:** These environment variables are read once at process startup and cached. Changing them requires restarting the provider process (e.g., via `trustless proxy reload`).
+
+### Custom Providers
+
+If you implement the protocol directly (without `provider_helpers`), consider adding your own blob validation. The TLS 1.3 CertificateVerify structure is:
+
+```
+| 64 bytes of 0x20 | context string (with NUL terminator) | handshake hash (32 or 48 bytes) |
+```
+
+For a TLS server, the context string is `"TLS 1.3, server CertificateVerify\0"` (34 bytes). Reject client CertificateVerify blobs unless your provider also serves as a TLS client.
 
 ## Certificate ID Best Practices
 

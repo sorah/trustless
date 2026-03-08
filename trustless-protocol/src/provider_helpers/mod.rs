@@ -1,9 +1,11 @@
 mod backend;
+mod blob_check;
 mod certificate;
 #[cfg(feature = "encrypted-key")]
 mod encrypted_key;
 
 pub use backend::*;
+pub use blob_check::*;
 pub use certificate::*;
 #[cfg(feature = "encrypted-key")]
 pub use encrypted_key::*;
@@ -26,6 +28,9 @@ pub enum ProviderHelperError {
     #[error("unsupported signature scheme: {0}")]
     UnsupportedScheme(String),
 
+    #[error("blob check failed: {0}")]
+    BlobCheckFailed(String),
+
     #[error("signing failed: {0}")]
     SigningFailed(String),
 
@@ -42,9 +47,9 @@ impl From<ProviderHelperError> for crate::message::ErrorCode {
             ProviderHelperError::UnsupportedScheme(m) => {
                 crate::message::ErrorCode::UnsupportedScheme(m)
             }
-            ProviderHelperError::SigningFailed(m) | ProviderHelperError::KeyDecryption(m) => {
-                crate::message::ErrorCode::SigningFailed(m)
-            }
+            ProviderHelperError::BlobCheckFailed(m)
+            | ProviderHelperError::SigningFailed(m)
+            | ProviderHelperError::KeyDecryption(m) => crate::message::ErrorCode::SigningFailed(m),
             other => crate::message::ErrorCode::SigningFailed(other.to_string()),
         }
     }

@@ -194,6 +194,7 @@ impl<S: CertificateSource> crate::handler::Handler for CachingBackend<S> {
 mod tests {
     use secrecy::ExposeSecret as _;
 
+    use super::super::blob_check::test_tls13_blob;
     use super::*;
 
     fn generate_cert(sans: Vec<String>) -> (String, String) {
@@ -351,7 +352,7 @@ mod tests {
             .sign(&crate::message::SignParams {
                 certificate_id: "cert-v1".to_owned(),
                 scheme,
-                blob: crate::message::Base64Bytes::from(vec![1, 2, 3, 4]).into_secret(),
+                blob: crate::message::Base64Bytes::from(test_tls13_blob()).into_secret(),
             })
             .await
             .unwrap();
@@ -371,7 +372,7 @@ mod tests {
             .sign(&crate::message::SignParams {
                 certificate_id: "cert-v1".to_owned(),
                 scheme: "ECDSA_NISTP256_SHA256".to_owned(),
-                blob: crate::message::Base64Bytes::from(vec![1, 2, 3, 4]).into_secret(),
+                blob: crate::message::Base64Bytes::from(test_tls13_blob()).into_secret(),
             })
             .await
             .unwrap();
@@ -392,7 +393,7 @@ mod tests {
             .sign(&crate::message::SignParams {
                 certificate_id: "nonexistent".to_owned(),
                 scheme: "ECDSA_NISTP256_SHA256".to_owned(),
-                blob: crate::message::Base64Bytes::from(vec![1, 2, 3]).into_secret(),
+                blob: crate::message::Base64Bytes::from(test_tls13_blob()).into_secret(),
             })
             .await
             .unwrap_err();
@@ -434,7 +435,7 @@ mod tests {
             crate::message::SignParams {
                 certificate_id: "cert-v1".to_owned(),
                 scheme,
-                blob: crate::message::Base64Bytes::from(vec![1, 2, 3]).into_secret(),
+                blob: crate::message::Base64Bytes::from(test_tls13_blob()).into_secret(),
             },
         )
         .await

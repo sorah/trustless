@@ -126,6 +126,8 @@ impl Certificate {
         &self,
         params: &crate::message::SignParams,
     ) -> Result<crate::message::SignResult, ProviderHelperError> {
+        super::blob_check::check_and_log_blob(params)?;
+
         let requested_scheme = crate::scheme::parse_scheme(&params.scheme).ok_or_else(|| {
             ProviderHelperError::UnsupportedScheme(format!(
                 "unknown signature scheme: {}",
@@ -180,6 +182,7 @@ pub fn build_initialize_result(
 
 #[cfg(test)]
 mod tests {
+    use super::super::blob_check::test_tls13_blob;
     use super::*;
 
     fn generate_cert(sans: Vec<String>) -> (String, String) {
@@ -238,7 +241,7 @@ mod tests {
         let params = crate::message::SignParams {
             certificate_id: "test/v1".to_owned(),
             scheme: scheme_name.to_owned(),
-            blob: crate::message::Base64Bytes::from(vec![1, 2, 3, 4]).into_secret(),
+            blob: crate::message::Base64Bytes::from(test_tls13_blob()).into_secret(),
         };
         let result = cert.sign(&params).unwrap();
         assert!(!result.signature.expose_secret().is_empty());
@@ -252,7 +255,7 @@ mod tests {
         let params = crate::message::SignParams {
             certificate_id: "test/v1".to_owned(),
             scheme: "NONEXISTENT_SCHEME".to_owned(),
-            blob: crate::message::Base64Bytes::from(vec![1, 2, 3]).into_secret(),
+            blob: crate::message::Base64Bytes::from(test_tls13_blob()).into_secret(),
         };
         let err = cert.sign(&params).unwrap_err();
         assert!(matches!(err, ProviderHelperError::UnsupportedScheme(_)));
