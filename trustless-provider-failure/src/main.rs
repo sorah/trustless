@@ -33,6 +33,10 @@ impl trustless_protocol::handler::Handler for FailureProxy {
         if let Some(path) = &self.initialize_error_file
             && path.exists()
         {
+            eprintln!(
+                "failure-proxy: injecting initialize error (trigger: {})",
+                path.display()
+            );
             return Err(trustless_protocol::message::ErrorCode::Internal(format!(
                 "failure injected: {} exists",
                 path.display()
@@ -52,6 +56,10 @@ impl trustless_protocol::handler::Handler for FailureProxy {
         if let Some(path) = &self.sign_error_file
             && path.exists()
         {
+            eprintln!(
+                "failure-proxy: injecting sign error (trigger: {})",
+                path.display()
+            );
             return Err(trustless_protocol::message::ErrorCode::SigningFailed(
                 format!("failure injected: {} exists", path.display()),
             ));
