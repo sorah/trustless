@@ -220,8 +220,10 @@ mod tests {
             .sign(&trustless_protocol::message::SignParams {
                 certificate_id: "example.com/v1".to_owned(),
                 scheme,
-                blob: trustless_protocol::message::Base64Bytes::from(vec![1, 2, 3, 4])
-                    .into_secret(),
+                blob: trustless_protocol::message::Base64Bytes::from(
+                    trustless_protocol::provider_helpers::test_tls13_blob(),
+                )
+                .into_secret(),
             })
             .await
             .unwrap();

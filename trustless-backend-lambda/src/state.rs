@@ -187,6 +187,7 @@ pub(crate) fn new_app_state(
 #[cfg(test)]
 mod tests {
     use secrecy::ExposeSecret as _;
+    use trustless_protocol::provider_helpers::test_tls13_blob;
 
     use super::*;
     use aws_smithy_mocks::{RuleMode, mock, mock_client};
@@ -406,7 +407,7 @@ mod tests {
             .sign(&trustless_protocol::message::SignParams {
                 certificate_id: "cert-v1".to_owned(),
                 scheme,
-                blob: trustless_protocol::message::Base64Bytes::from(vec![1, 2, 3, 4])
+                blob: trustless_protocol::message::Base64Bytes::from(test_tls13_blob())
                     .into_secret(),
             })
             .await
@@ -440,7 +441,8 @@ mod tests {
             .sign(&trustless_protocol::message::SignParams {
                 certificate_id: "nonexistent".to_owned(),
                 scheme: "ECDSA_NISTP256_SHA256".to_owned(),
-                blob: trustless_protocol::message::Base64Bytes::from(vec![1, 2, 3]).into_secret(),
+                blob: trustless_protocol::message::Base64Bytes::from(test_tls13_blob())
+                    .into_secret(),
             })
             .await
             .unwrap_err();
@@ -485,7 +487,8 @@ mod tests {
             .sign(&trustless_protocol::message::SignParams {
                 certificate_id: "cert-v1".to_owned(),
                 scheme: "NONEXISTENT_SCHEME".to_owned(),
-                blob: trustless_protocol::message::Base64Bytes::from(vec![1, 2, 3]).into_secret(),
+                blob: trustless_protocol::message::Base64Bytes::from(test_tls13_blob())
+                    .into_secret(),
             })
             .await
             .unwrap_err();

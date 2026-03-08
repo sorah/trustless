@@ -61,7 +61,7 @@ pub fn log_blob(blob: &[u8], certificate_id: &str, scheme: &str) {
 }
 
 /// Build a valid TLS 1.3 server CertificateVerify blob for testing.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-helpers"))]
 pub fn test_tls13_blob() -> Vec<u8> {
     let mut blob = vec![0x20; 64];
     blob.extend_from_slice(TLS13_SERVER_CONTEXT);

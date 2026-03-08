@@ -25,6 +25,7 @@ tracing-subscriber = { workspace = true, features = ["json"] }
 rustls-pki-types.workspace = true
 
 [dev-dependencies]
+trustless-protocol = { workspace = true, features = ["test-helpers"] }
 rcgen.workspace = true
 aws-smithy-mocks = "0.2"
 aws-sdk-s3 = { version = "1", features = ["test-util"] }

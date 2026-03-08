@@ -10,6 +10,7 @@ repository = "https://github.com/sorah/trustless"
 [features]
 provider-helpers = ["dep:rustls-pki-types", "dep:x509-parser", "rustls/aws_lc_rs"]
 encrypted-key = ["provider-helpers", "dep:pkcs8", "dep:aes", "dep:cbc", "dep:cipher", "dep:md-5", "dep:base64ct"]
+test-helpers = ["provider-helpers"]
 
 [dependencies]
 bytes.workspace = true

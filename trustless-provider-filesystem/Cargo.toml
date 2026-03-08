@@ -17,6 +17,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+trustless-protocol = { workspace = true, features = ["test-helpers"] }
 rcgen.workspace = true
 secrecy.workspace = true
 tempfile = "3"
