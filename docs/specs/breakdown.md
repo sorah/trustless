@@ -99,4 +99,4 @@ N/A by design (Trustless uses remote signing with real domains instead of local 
 - rename provider-filesystem to provider-filesystem
 - `trustless get`
 - plain http `*.localhost` support
-
+- `trustless proxy reload` should trigger immediate restart of all providers regardless of backoff
