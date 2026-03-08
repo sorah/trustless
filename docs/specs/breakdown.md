@@ -75,7 +75,6 @@ N/A by design (Trustless uses remote signing with real domains instead of local 
 ## Misc quality
 
 - cleanup meaningless tests
-- status must show routes first, providers later
 - hardening: limit blob, log blob
 - secrecy on Message structs
 - plain http `*.localhost` support

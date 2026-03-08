@@ -175,10 +175,8 @@ async fn test_reserved_host_returns_503() {
         .unwrap();
 
     assert_eq!(resp.status(), 503);
-    assert_eq!(
-        resp.text().await.unwrap(),
-        "proxy control API not yet implemented\n"
-    );
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("reserved hostname"), "body: {body}");
 }
 
 #[tokio::test]

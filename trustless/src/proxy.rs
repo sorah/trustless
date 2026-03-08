@@ -4,8 +4,8 @@ const VIA_VALUE: &str = "1.1 trustless";
 enum ProxyError {
     #[error("no Host header")]
     NoHostHeader,
-    #[error("proxy control API not yet implemented")]
-    ControlApiNotImplemented,
+    #[error("reserved hostname: use the control API via dispatch_router")]
+    ReservedHostname,
     #[error(
         "loop detected for {host}: request has passed through trustless {hops} times. \
          This usually means a backend is proxying back through trustless without \
@@ -32,7 +32,7 @@ impl ProxyError {
     fn status(&self) -> http::StatusCode {
         match self {
             Self::NoRoute(_) => http::StatusCode::NOT_FOUND,
-            Self::ControlApiNotImplemented => http::StatusCode::SERVICE_UNAVAILABLE,
+            Self::ReservedHostname => http::StatusCode::SERVICE_UNAVAILABLE,
             Self::LoopDetected { .. } => http::StatusCode::LOOP_DETECTED,
             _ => http::StatusCode::BAD_GATEWAY,
         }
@@ -81,7 +81,7 @@ impl axum::response::IntoResponse for ErrorResponse {
                 crate::error_page::render_508_page(host, *hops)
             }
             _ => {
-                // For other errors (NoHostHeader, ControlApiNotImplemented, RouteResolution),
+                // For other errors (NoHostHeader, ReservedHostname, RouteResolution),
                 // fall back to plain text
                 return (
                     status,
@@ -176,7 +176,7 @@ async fn proxy_handler(
             .to_ascii_lowercase()
             .starts_with("trustless.")
     {
-        return Err(mk_err(ProxyError::ControlApiNotImplemented));
+        return Err(mk_err(ProxyError::ReservedHostname));
     }
 
     // Loop prevention
