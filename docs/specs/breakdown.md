@@ -48,13 +48,15 @@ At parity:
 - Graceful shutdown with drain — done (30s timeout)
 
 Partial or not yet implemented:
-- `portless list` (show active routes) — partial (`trustless status` shows routes)
-- `portless get <name>` (print URL for service) — done (`trustless get <name>`)
 - `portless alias <name> <port>` (static route) — partial (`trustless route add/remove` exists)
-- Styled HTML error pages (404, 502, 508) — **not implemented** (plain text only)
-- 404 page showing active routes as index — **not implemented**
-- Dark mode CSS for error pages — **not implemented**
-- Colored / formatted CLI output — **not implemented** (no color crate)
+
+Done:
+- `portless list` (show active routes) — done (`trustless list` + `trustless l` alias)
+- `portless get <name>` (print URL for service) — done (`trustless get <name>`)
+- Styled HTML error pages (404, 502, 508) — done
+- 404 page showing active routes as index — done
+- Dark mode CSS for error pages — done (included in styled pages)
+- Colored / formatted CLI output — done
 
 N/A by design (Trustless uses remote signing with real domains instead of local CA + `.localhost`):
 - Named `.localhost` URLs — uses registrable domains (`*.dev.example.com`) instead
@@ -64,9 +66,9 @@ N/A by design (Trustless uses remote signing with real domains instead of local 
 
 #### Remaining work
 
-##### README
+##### README — done
 
-- README that sounds fancy
+- README updated with all commands, error pages, env vars, framework detection
 
 ### Release Engineering
 
@@ -76,5 +78,4 @@ N/A by design (Trustless uses remote signing with real domains instead of local 
 
 - cleanup meaningless tests
 - hardening: limit blob, log blob
-- secrecy on Message structs
 - plain http `*.localhost` support

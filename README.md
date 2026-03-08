@@ -131,12 +131,44 @@ trustless exec <subdomain> [--profile=NAME] <command...>    # Run app (explicit 
 trustless setup [--profile=NAME] -- <provider-command...>   # Save a provider to a profile
 trustless proxy start                                       # Start the proxy
 trustless proxy stop                                        # Stop a running proxy
-trustless proxy reload                                      # Reload provider configuration
+trustless proxy reload                                      # Reload provider configuration (restarts all providers)
+trustless list                                              # List active routes with URLs
+trustless get <name>                                        # Print the URL for a named service
+trustless status                                            # Show proxy status and providers
 trustless route add <hostname> <backend>                    # Register a static route
 trustless route remove <hostname>                           # Remove a route
-trustless status                                            # Show proxy status and routes
 trustless test-provider [--profile=NAME]                    # Verify a provider works
 ```
+
+Aliases: `trustless l` = list, `trustless s` = status.
+
+## Error Pages & Status
+
+The proxy serves styled HTML error pages with dark mode support:
+
+- **502 Bad Gateway** — when the backend is unreachable
+- **508 Loop Detected** — when a forwarding loop is detected
+- **404 Not Found** — when no route matches, showing a list of active routes
+
+Visiting `https://trustless.<domain>/` in the browser shows a status page with active routes and provider health.
+
+## Environment Variables
+
+When using `trustless exec` or `trustless run`, the following environment variables are set for the child process:
+
+- **`PORT`** — the ephemeral port your app should listen on
+- **`HOST`** — the hostname to bind to (loopback)
+- **`TRUSTLESS_URL`** — the full HTTPS URL for the service (e.g. `https://my-app.dev.example.com:1443`)
+
+Set `TRUSTLESS=0` or `TRUSTLESS=skip` to bypass the proxy entirely and run the command without routing through trustless.
+
+## Framework Detection
+
+`trustless exec` and `trustless run` auto-inject framework-specific flags so your dev server listens on the correct host and port:
+
+- **Vite** / **React Router** / **Astro** — `--host` and `--port`
+- **Angular** — `--host` and `--port`
+- **React Native** / **Expo** — `--port`
 
 ## Prior Art
 
