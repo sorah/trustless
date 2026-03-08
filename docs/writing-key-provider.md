@@ -124,9 +124,101 @@ These codes are not strictly standardized. Use positive integers with descriptiv
 
 ## Implementing in Rust
 
-The `trustless-protocol` crate provides the `Handler` trait and a ready-made event loop.
+The `trustless-protocol` crate provides two levels of abstraction:
 
-### Minimal Example
+1. **`provider_helpers`** (recommended) — implement the `CertificateSource` trait to describe where your certificates live. Wrap it in `CachingBackend`, which handles caching, signing, blob validation, and the `Handler` protocol for you.
+2. **`Handler` trait** (low-level) — implement `initialize` and `sign` yourself for full control.
+
+### Using `CertificateSource` + `CachingBackend` (Recommended)
+
+The `provider_helpers` module lets you focus on loading certificates while the framework handles caching, scheme detection, blob validation, and signing.
+
+You implement three things:
+- **`sources()`** — return a list of certificate sources (e.g., directories, S3 prefixes, vault paths). The first entry becomes the default certificate.
+- **`fetch_current_id(source)`** — return the current certificate ID for a source (e.g., read a version file, query an API).
+- **`load_certificate(source, cert_id)`** — load a full certificate chain and private key, returning a `Certificate`.
+
+`CachingBackend` wraps your source and provides a complete `Handler` implementation with:
+- Certificate caching across `initialize` / `sign` calls
+- Automatic signature scheme detection from key type
+- TLS 1.3 blob validation before signing (see [Blob Validation](#blob-validation))
+- On re-initialization, only refreshes certificates whose current ID has changed
+
+```rust
+use trustless_protocol::provider_helpers::{
+    CachingBackend, Certificate, CertificateSource, ProviderHelperError,
+};
+
+struct MySource {
+    // your certificate locations
+}
+
+// Your source entry type — identifies one certificate source
+struct MyEntry {
+    name: String,
+}
+
+// Error type must convert to ErrorCode and accept ProviderHelperError
+#[derive(Debug, thiserror::Error)]
+enum MyError {
+    #[error("provider error: {0}")]
+    Provider(#[from] ProviderHelperError),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+impl From<MyError> for trustless_protocol::message::ErrorCode {
+    fn from(e: MyError) -> Self {
+        match e {
+            MyError::Provider(pe) => pe.into(),
+            other => trustless_protocol::message::ErrorCode::Internal(other.to_string()),
+        }
+    }
+}
+
+impl CertificateSource for MySource {
+    type SourceId = MyEntry;
+    type Error = MyError;
+
+    fn sources(&self) -> &[MyEntry] {
+        &self.entries  // first entry is the default
+    }
+
+    async fn fetch_current_id(&self, source: &MyEntry) -> Result<String, MyError> {
+        // Return the current version identifier for this source.
+        // e.g., read from a file, query an API, check S3 metadata
+        Ok(format!("{}/2026-01", source.name))
+    }
+
+    async fn load_certificate(
+        &self,
+        source: &MyEntry,
+        cert_id: &str,
+    ) -> Result<Certificate, MyError> {
+        let fullchain_pem = std::fs::read_to_string("fullchain.pem")?;
+        let key_pem = std::fs::read("key.pem")?;
+
+        // Certificate::from_pem parses the chain, extracts DNS SANs,
+        // loads the signing key, and detects supported signature schemes
+        let cert = Certificate::from_pem(cert_id.to_owned(), fullchain_pem, &key_pem)?;
+        Ok(cert)
+    }
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let source = MySource { /* ... */ };
+    let backend = CachingBackend::new(source);
+    trustless_protocol::handler::run(backend).await?;
+    Ok(())
+}
+```
+
+`Certificate::from_pem` parses the PEM fullchain and private key, extracts DNS SANs from the leaf certificate, and detects supported signature schemes from the key type. For encrypted private keys, use `Certificate::from_pem_with_passphrase` instead (requires the `encrypted-key` feature).
+
+### Using the `Handler` Trait Directly
+
+For full control over initialization and signing, implement the `Handler` trait directly:
 
 ```rust
 use trustless_protocol::handler::Handler;
@@ -178,7 +270,7 @@ The `run` function reads requests from stdin, dispatches to your `Handler`, and 
 
 ### Reference Implementation
 
-See `trustless-provider-filesystem` for a complete working example that loads certificates and keys from a directory on disk and performs signing using `rustls::crypto::aws_lc_rs`.
+See `trustless-provider-filesystem` for a complete working example using `CertificateSource` + `CachingBackend` that loads certificates and keys from a directory on disk.
 
 ## Implementing in Other Languages
 
