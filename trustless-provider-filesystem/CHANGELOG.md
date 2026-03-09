@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0](https://github.com/sorah/trustless/releases/tag/trustless-provider-filesystem/v0.1.0) - 2026-03-08
+## [0.3.0-rc1](https://github.com/sorah/trustless/releases/tag/trustless-provider-filesystem/v0.3.0-rc1) - 2026-03-08
 
 ### Other
 

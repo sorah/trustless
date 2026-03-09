@@ -1,6 +1,6 @@
 [package]
 name = "trustless-provider-lambda"
-version = "0.1.1"
+version = "0.3.0-rc1"
 edition = "2024"
 license = "Apache-2.0"
 description = "AWS Lambda key provider for trustless"

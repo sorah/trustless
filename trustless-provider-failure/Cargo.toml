@@ -6,7 +6,7 @@ license = "Apache-2.0"
 publish = false
 
 [dependencies]
-trustless = { version = "0.2.0", path = "../trustless" }
+trustless = { version = "0.3.0-rc1", path = "../trustless" }
 trustless-protocol.workspace = true
 anyhow.workspace = true
 clap.workspace = true

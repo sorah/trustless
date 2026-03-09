@@ -3674,7 +3674,7 @@ dependencies = [
 
 [[package]]
 name = "trustless"
-version = "0.2.0"
+version = "0.3.0-rc1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3785,7 +3785,7 @@ dependencies = [
 
 [[package]]
 name = "trustless-provider-filesystem"
-version = "0.1.0"
+version = "0.3.0-rc1"
 dependencies = [
  "anyhow",
  "clap",
@@ -3801,7 +3801,7 @@ dependencies = [
 
 [[package]]
 name = "trustless-provider-lambda"
-version = "0.1.1"
+version = "0.3.0-rc1"
 dependencies = [
  "anyhow",
  "aws-config",
