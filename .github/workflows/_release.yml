@@ -52,7 +52,7 @@ jobs:
   wait-binaries:
     needs: [release-plz]
     if: needs.release-plz.outputs.trustless_released == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     permissions:
       contents: read
       actions: read
@@ -154,7 +154,7 @@ jobs:
 
   release-bundle:
     needs: [wait-binaries]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     permissions:
       contents: write
     concurrency:
