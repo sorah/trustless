@@ -17,40 +17,16 @@ Tools like [Portless](https://github.com/vercel-labs/portless) solve the port-nu
 - **Secure context requires HTTPS with trusted certificates.** Browsers grant secure context to plain `localhost`, but once you use a registrable domain, you need a real TLS certificate
 - **Self-signed certs need trust store changes.** Installing a local CA means modifying system or browser trust stores on every developer's machine and poses security risks if not handled carefully.
 
-Trustless fixes this by sharing a publicly trusted certificate through a key provider you deploy once, then every developer on the team gets HTTPS on registrable domains with zero local trust store changes. The key provider exposes only a signing interface; private keys are never distributed.
+Trustless fixes this by sharing a publicly trusted certificate through a key provider you deploy once, then every developer on the team gets HTTPS on registrable domains with zero local trust store changes -- without distributing private keys.
 
-__It's noteworthy that sharing a private key is risky!__ We tolerate by minimizing its risk. By having a key provider in between a locally running HTTPS proxy and actual key materials, we can instantly revoke access when needed.
+__It's noteworthy that sharing a private key is risky!__ Trustless never distributes raw private keys, key providers expose only a signing interface. But users must acknowledge its risk. We can tolerate this by minimizing the risk: by placing a key provider between a locally running HTTPS proxy and the actual key materials, we can instantly revoke access when needed. Raw key export is disallowed.
 
 ## Install
 
 - **Mise:** `mise use -g github:sorah/trustless@latest`
 - **Binaries:** Download from [GitHub Releases](https://github.com/sorah/trustless/releases?q=rel%2F&expanded=true)
 
-_These commands install all executables provded in this repository (`trustless` + provider plugin commands)._
-
-## How It Works
-
-```mermaid
-flowchart TD
-    Browser["Browser<br>https://my-api.dev.example.com:1443"]
-    Proxy["trustless proxy<br>(TLS termination, port 1443)"]
-    ProviderCmd["Provider Command<br>(local CLI)"]
-    ProviderServer["Provider Server<br>(e.g. Lambda function;<br>signs only, no key export)"]
-    Storage[("Key Storage<br>(e.g. S3)")]
-    App1[":4123<br>my-api"]
-    App2[":4567<br>my-frontend"]
-
-    Browser -->|HTTPS| Proxy
-    Proxy -.->|"sign request → signature"| ProviderCmd
-    ProviderCmd -.-> ProviderServer
-    ProviderServer --- Storage
-    Proxy -->|HTTP| App1
-    Proxy -->|HTTP| App2
-```
-
-1. **Key provider** -- You deploy a provider (e.g. AWS Lambda + S3) that holds a wildcard certificate for your dev domain. The provider signs TLS handshake data on request but never exports the private key.
-2. **Proxy** -- `trustless proxy` runs locally, terminates TLS using the provider for signing, and forwards plain HTTP to your app on loopback.
-3. **Run** -- `trustless run <command>` infers a subdomain, assigns an ephemeral port, registers a route with the proxy, and starts your app with `PORT` and `HOST` set.
+_These commands install all executables provided in this repository (`trustless` + provider plugin commands)._
 
 ## Quick Start
 
@@ -95,6 +71,30 @@ The proxy auto-starts on first use. Start it explicitly with `trustless proxy st
 >
 > To limit the blast radius: **Use a dedicated domain exclusively for local development** (e.g. `*.lo.mycompany-dev.com`). You may want to have a isolated registered domain for this purpose, even avoiding subdomains.
 > Never reuse certificates, keys, or domains that are used for other purposes, such as existing TLS private keys or domains serving real traffic.
+
+## How It Works
+
+```mermaid
+flowchart TD
+    Browser["Browser<br>https://my-api.dev.example.com:1443"]
+    Proxy["trustless proxy<br>(TLS termination, port 1443)"]
+    ProviderCmd["Provider Command<br>(local CLI)"]
+    ProviderServer["Provider Server<br>(e.g. Lambda function;<br>signs only, no key export)"]
+    Storage[("Key Storage<br>(e.g. S3)")]
+    App1[":4123<br>my-api"]
+    App2[":4567<br>my-frontend"]
+
+    Browser -->|HTTPS| Proxy
+    Proxy -.->|"sign request → signature"| ProviderCmd
+    ProviderCmd -.-> ProviderServer
+    ProviderServer --- Storage
+    Proxy -->|HTTP| App1
+    Proxy -->|HTTP| App2
+```
+
+1. **Key provider** -- You deploy a provider (e.g. AWS Lambda + S3) that holds a wildcard certificate for your dev domain. The provider signs TLS handshake data on request but never exports the private key.
+2. **Proxy** -- `trustless proxy` runs locally, terminates TLS using the provider for signing, and forwards plain HTTP to your app on loopback.
+3. **Run** -- `trustless run <command>` infers a subdomain, assigns an ephemeral port, registers a route with the proxy, and starts your app with `PORT` and `HOST` set.
 
 ## Routing
 
