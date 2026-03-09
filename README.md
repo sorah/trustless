@@ -21,6 +21,13 @@ Trustless fixes this by sharing a publicly trusted certificate through a key pro
 
 __It's noteworthy that sharing a private key is risky!__ We tolerate by minimizing its risk. By having a key provider in between a locally running HTTPS proxy and actual key materials, we can instantly revoke access when needed.
 
+## Install
+
+- **Mise:** `mise use -g github:sorah/trustless@latest`
+- **Binaries:** Download from [GitHub Releases](https://github.com/sorah/trustless/releases?q=rel%2F&expanded=true)
+
+_These commands install all executables provded in this repository (`trustless` + provider plugin commands)._
+
 ## How It Works
 
 ```mermaid
