@@ -33,10 +33,10 @@ jobs:
         run: echo "bin=${GITHUB_REF_NAME%%/*}" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/setup
         with: { target: "${{ matrix.target }}", rust-toolchain: 'false' }
-      - uses: taiki-e/setup-cross-toolchain-action@b8d1a322a6009a2b7220f53996695778eef89b41 # v1.38.0
+      - uses: taiki-e/setup-cross-toolchain-action@20dbac418ca692fd1a9377acf2cec38161169a39 # v1.39.1
         with:
           target: "${{ matrix.target }}"
-      - uses: taiki-e/upload-rust-binary-action@f391289bcff6a7f36b6301c0a74199657bbb4561 # v1.28.0
+      - uses: taiki-e/upload-rust-binary-action@381995c84a8e242b8736ec80211c563d7bd07ce7 # v1.28.1
         with:
           bin: ${{ steps.meta.outputs.bin }}
           target: '${{ matrix.target }}'
@@ -88,5 +88,6 @@ jobs:
           encoded_tag="${GITHUB_REF_NAME/\//%2F}"
           existing_body="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json body -q '.body')"
           base_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${encoded_tag}"
+          # shellcheck disable=SC2016
           deploy_block="$(printf '\n#### Deploy\n\nNote: These sums are `sha512_hex(base64(zip blob))` due to Terraform limitation.\n\n##### arm64\n\n```tf\nsource_url    = "%s/trustless-backend-lambda.arm64.zip"\nsource_sha512 = "%s"\n```\n\n##### x86_64\n\n```tf\nsource_url    = "%s/trustless-backend-lambda.x86_64.zip"\nsource_sha512 = "%s"\n```' "$base_url" "$SHA512_ARM64" "$base_url" "$SHA512_X86_64")"
           gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --notes "${existing_body}${deploy_block}"

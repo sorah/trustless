@@ -1,4 +1,5 @@
 name: setup
+description: Install Rust toolchain and dependencies
 
 inputs:
   target:
