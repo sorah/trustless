@@ -1,11 +1,14 @@
 [package]
 name = "trustless"
 version = "0.3.0-rc2"
-edition = "2024"
-license = "Apache-2.0"
+edition.workspace = true
+license.workspace = true
+readme.workspace = true
+keywords.workspace = true
 description = "HTTPS on registrable domains for local development without touching your system trust store"
-homepage = "https://github.com/sorah/trustless"
-repository = "https://github.com/sorah/trustless"
+categories = ["development-tools", "web-programming"]
+homepage.workspace = true
+repository.workspace = true
 
 [dependencies]
 trustless-protocol.workspace = true

@@ -2,6 +2,14 @@
 resolver = "3"
 members = ["trustless", "trustless-protocol", "trustless-provider-failure", "trustless-provider-filesystem", "trustless-provider-lambda", "trustless-backend-lambda"]
 
+[workspace.package]
+license = "Apache-2.0"
+edition = "2024"
+homepage = "https://github.com/sorah/trustless"
+repository = "https://github.com/sorah/trustless"
+readme = "README.md"
+keywords = ["trustless"]
+
 [workspace.dependencies]
 trustless-protocol = { version = "0.2.0", path = "trustless-protocol" }
 anyhow = "1"

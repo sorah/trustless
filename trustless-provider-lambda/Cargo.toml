@@ -1,11 +1,12 @@
 [package]
 name = "trustless-provider-lambda"
 version = "0.3.0-rc2"
-edition = "2024"
-license = "Apache-2.0"
+edition.workspace = true
+license.workspace = true
+keywords.workspace = true
 description = "AWS Lambda key provider for trustless"
-homepage = "https://github.com/sorah/trustless"
-repository = "https://github.com/sorah/trustless"
+homepage.workspace = true
+repository.workspace = true
 
 [dependencies]
 trustless-protocol.workspace = true
