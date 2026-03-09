@@ -62,6 +62,12 @@ The module outputs `function_arn`.
 | `timeout` | no | `30` | Timeout in seconds |
 | `environment_variables` | no | `{}` | Additional environment variables (merged with module-managed ones; user values take precedence) |
 
+#### Choosing a zip package
+
+Find a prebuilt zip package for the Lambda function from the releases page. It is attached to `trustless-provider-lambda` crate releases:
+
+- https://github.com/sorah/trustless/releases?q=trustless-provider-lambda&expanded=true
+
 #### IAM Role
 
 The module requires an existing IAM role ARN. Here is an example role definition:
