@@ -162,6 +162,8 @@ jobs:
     runs-on: ubuntu-slim
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     concurrency:
       group: combined-release
       cancel-in-progress: false
@@ -192,12 +194,17 @@ jobs:
               asset="${crate}-${target}.tar.gz"
               echo "Downloading ${asset} from release ${tag}"
               gh release download "$tag" --pattern "$asset" --dir "$workdir"
+              gh attestation verify "${workdir}/${asset}" --repo "$GITHUB_REPOSITORY"
               tar -xzf "${workdir}/${asset}" -C "$workdir"
               rm "${workdir}/${asset}"
             done
             tar -czf "trustless-${target}.tar.gz" -C "$workdir" .
             rm -rf "$workdir"
           done
+
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: 'trustless-*.tar.gz'
 
       - name: Create combined release
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8

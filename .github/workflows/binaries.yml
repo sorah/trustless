@@ -2,6 +2,8 @@ name: binaries
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 on:
   push:
@@ -42,6 +44,9 @@ jobs:
           target: '${{ matrix.target }}'
           tar: unix
           token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: '${{ steps.meta.outputs.bin }}-${{ matrix.target }}.tar.gz'
 
   upload-lambda-function:
     if: startsWith(github.ref_name, 'trustless-provider-lambda/')
@@ -68,6 +73,9 @@ jobs:
       - run: gh release upload "${{ github.ref_name }}" "target/lambda/bootstrap/trustless-backend-lambda.${{ matrix.arch-suffix }}.zip" --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: 'target/lambda/bootstrap/trustless-backend-lambda.${{ matrix.arch-suffix }}.zip'
       - name: Compute source_sha512
         id: sha512
         run: |
