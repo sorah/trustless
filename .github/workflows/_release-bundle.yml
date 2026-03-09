@@ -1,0 +1,124 @@
+name: release-bundle
+
+on:
+  workflow_call:
+    inputs:
+      crate_tags:
+        description: 'JSON map of { crate: { tag, version } }'
+        required: true
+        type: string
+
+jobs:
+  release-bundle:
+    runs-on: ubuntu-slim
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    concurrency:
+      group: combined-release
+      cancel-in-progress: false
+    steps:
+      - name: Download and combine binaries
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CRATE_TAGS: ${{ inputs.crate_tags }}
+        run: |
+          set -euo pipefail
+
+          targets=(
+            x86_64-unknown-linux-musl
+            aarch64-unknown-linux-musl
+            aarch64-apple-darwin
+          )
+          readarray -t crates < <(echo "$CRATE_TAGS" | jq -r 'keys[]')
+
+          for target in "${targets[@]}"; do
+            workdir="$(mktemp -d)"
+            for crate in "${crates[@]}"; do
+              tag="$(echo "$CRATE_TAGS" | jq -r --arg c "$crate" '.[$c].tag')"
+              asset="${crate}-${target}.tar.gz"
+              echo "Downloading ${asset} from release ${tag}"
+              gh release download "$tag" --pattern "$asset" --dir "$workdir"
+              gh attestation verify "${workdir}/${asset}" --repo "$GITHUB_REPOSITORY"
+              tar -xzf "${workdir}/${asset}" -C "$workdir"
+              rm "${workdir}/${asset}"
+            done
+            tar -czf "trustless-${target}.tar.gz" -C "$workdir" .
+            rm -rf "$workdir"
+          done
+
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: 'trustless-*.tar.gz'
+
+      - name: Create combined release
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CRATE_TAGS: ${{ inputs.crate_tags }}
+        with:
+          script: |
+            const fs = require('fs');
+            const crateTags = JSON.parse(process.env.CRATE_TAGS);
+            // Determine rel/ tag with sequential number
+            const today = new Date().toISOString().slice(0, 10).replace(/-/g, '.');
+            const prefix = `rel/${today}.`;
+
+            // Find existing rel/ tags for today
+            const { data: refs } = await github.rest.git.listMatchingRefs({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `tags/${prefix}`,
+            });
+
+            let seq = 1;
+            for (const ref of refs) {
+              const tagName = ref.ref.replace('refs/tags/', '');
+              const num = parseInt(tagName.replace(`${prefix}`, ''), 10);
+              if (!isNaN(num) && num >= seq) {
+                seq = num + 1;
+              }
+            }
+            const relTag = `${prefix}${String(seq).padStart(2, '0')}`;
+
+            // Build release body
+            const lines = ['## Included releases\n'];
+            for (const [crate, { tag, version }] of Object.entries(crateTags)) {
+              const url = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/tag/${encodeURIComponent(tag)}`;
+              lines.push(`- [${crate} v${version}](${url})`);
+            }
+            const body = lines.join('\n');
+
+            // Create draft release
+            const { data: release } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: relTag,
+              target_commitish: context.sha,
+              name: relTag,
+              body,
+              draft: true,
+            });
+
+            core.info(`Created draft release: ${release.html_url}`);
+
+            // Upload combined tarballs
+            const targets = [
+              'x86_64-unknown-linux-musl',
+              'aarch64-unknown-linux-musl',
+              'aarch64-apple-darwin',
+            ];
+            for (const target of targets) {
+              const assetName = `trustless-${target}.tar.gz`;
+              const data = fs.readFileSync(assetName);
+              await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: release.id,
+                name: assetName,
+                data,
+              });
+              core.info(`Uploaded ${assetName}`);
+            }
+
+            core.info(`Release: ${release.html_url}`);

@@ -1,0 +1,53 @@
+name: release-bundle
+
+on:
+  workflow_dispatch: {}
+
+env:
+  BINARY_CRATES: '["trustless", "trustless-provider-filesystem", "trustless-provider-lambda"]'
+
+jobs:
+  resolve-tags:
+    runs-on: ubuntu-slim
+    outputs:
+      crate_tags: ${{ steps.resolve.outputs.crate_tags }}
+    steps:
+      - name: Resolve latest tags
+        id: resolve
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          BINARY_CRATES: ${{ env.BINARY_CRATES }}
+        with:
+          script: |
+            const binaryCrates = JSON.parse(process.env.BINARY_CRATES);
+            const crateTags = {};
+
+            for (const crate of binaryCrates) {
+              const { data: refs } = await github.rest.git.listMatchingRefs({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `tags/${crate}/v`,
+              });
+              if (refs.length === 0) {
+                core.setFailed(`No tag found for ${crate}`);
+                return;
+              }
+              const latestRef = refs[refs.length - 1].ref;
+              const latestTag = latestRef.replace('refs/tags/', '');
+              const version = latestTag.replace(`${crate}/v`, '');
+              crateTags[crate] = { tag: latestTag, version };
+            }
+
+            core.setOutput('crate_tags', JSON.stringify(crateTags));
+            core.info(`Crate tags: ${JSON.stringify(crateTags, null, 2)}`);
+
+  bundle:
+    needs: [resolve-tags]
+    uses: ./.github/workflows/_release-bundle.yml
+    secrets: inherit
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    with:
+      crate_tags: ${{ needs.resolve-tags.outputs.crate_tags }}
