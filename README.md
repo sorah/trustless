@@ -23,7 +23,7 @@ __It's noteworthy that sharing a private key is risky!__ Trustless never distrib
 
 ## Install
 
-- **Mise:** `mise use -g github:sorah/trustless@latest`
+- **Mise:** `mise use -g 'github:sorah/trustless[version=latest,version_prefix=rel/]'`
 - **Binaries:** Download from [GitHub Releases](https://github.com/sorah/trustless/releases?q=rel%2F&expanded=true)
 
 _These commands install all executables provided in this repository (`trustless` + provider plugin commands)._
