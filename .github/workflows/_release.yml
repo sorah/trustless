@@ -1,5 +1,8 @@
 name: release
 
+env:
+  BINARY_CRATES: '["trustless", "trustless-provider-filesystem", "trustless-provider-lambda"]'
+
 on:
   workflow_call:
     outputs:
@@ -17,7 +20,7 @@ jobs:
       id-token: write
     outputs:
       releases: ${{ steps.release-plz.outputs.releases }}
-      trustless_released: ${{ steps.check-trustless.outputs.result }}
+      binary_released: ${{ steps.check-binary-released.outputs.result }}
     steps:
       - uses: actions/create-github-app-token@bf559f85448f9380bcfa2899dbdc01eb5b37be3a # v3.0.0-beta.2
         id: generate-token
@@ -38,37 +41,40 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-      - name: Check if trustless was released
-        id: check-trustless
+      - name: Check if any binary crate was released
+        id: check-binary-released
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           RELEASES_JSON: ${{ steps.release-plz.outputs.releases }}
+          BINARY_CRATES: ${{ env.BINARY_CRATES }}
         with:
           result-encoding: string
           script: |
             const releases = JSON.parse(process.env.RELEASES_JSON || '[]');
-            return releases.some(r => r.package_name === 'trustless') ? 'true' : 'false';
+            const binaryCrates = JSON.parse(process.env.BINARY_CRATES);
+            return releases.some(r => binaryCrates.includes(r.package_name)) ? 'true' : 'false';
 
   wait-binaries:
     needs: [release-plz]
-    if: needs.release-plz.outputs.trustless_released == 'true'
+    if: needs.release-plz.outputs.binary_released == 'true'
     runs-on: ubuntu-slim
     permissions:
       contents: read
       actions: read
     outputs:
       crate_tags: ${{ steps.matrix.outputs.crate_tags }}
-      trustless_tag: ${{ steps.matrix.outputs.trustless_tag }}
+
     steps:
       - name: Determine release matrix
         id: matrix
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           RELEASES_JSON: ${{ needs.release-plz.outputs.releases }}
+          BINARY_CRATES: ${{ env.BINARY_CRATES }}
         with:
           script: |
             const releases = JSON.parse(process.env.RELEASES_JSON);
-            const binaryCrates = ['trustless', 'trustless-provider-filesystem', 'trustless-provider-lambda'];
+            const binaryCrates = JSON.parse(process.env.BINARY_CRATES);
             const crateTags = {};
 
             for (const crate of binaryCrates) {
@@ -95,7 +101,6 @@ jobs:
             }
 
             core.setOutput('crate_tags', JSON.stringify(crateTags));
-            core.setOutput('trustless_tag', crateTags['trustless'].tag);
             core.info(`Crate tags: ${JSON.stringify(crateTags, null, 2)}`);
 
       - name: Wait for binaries workflows
@@ -169,6 +174,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CRATE_TAGS: ${{ needs.wait-binaries.outputs.crate_tags }}
+          BINARY_CRATES: ${{ env.BINARY_CRATES }}
         run: |
           set -euo pipefail
 
@@ -177,7 +183,7 @@ jobs:
             aarch64-unknown-linux-musl
             aarch64-apple-darwin
           )
-          crates=(trustless trustless-provider-filesystem trustless-provider-lambda)
+          readarray -t crates < <(echo "$BINARY_CRATES" | jq -r '.[]')
 
           for target in "${targets[@]}"; do
             workdir="$(mktemp -d)"
@@ -197,13 +203,10 @@ jobs:
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           CRATE_TAGS: ${{ needs.wait-binaries.outputs.crate_tags }}
-          TRUSTLESS_TAG: ${{ needs.wait-binaries.outputs.trustless_tag }}
         with:
           script: |
             const fs = require('fs');
             const crateTags = JSON.parse(process.env.CRATE_TAGS);
-            const trustlessTag = process.env.TRUSTLESS_TAG;
-
             // Determine rel/ tag with sequential number
             const today = new Date().toISOString().slice(0, 10).replace(/-/g, '.');
             const prefix = `rel/${today}.`;
@@ -225,14 +228,6 @@ jobs:
             }
             const relTag = `${prefix}${String(seq).padStart(2, '0')}`;
 
-            // Get commit SHA from trustless tag
-            const { data: tagRef } = await github.rest.git.getRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: `tags/${trustlessTag}`,
-            });
-            const targetCommitish = tagRef.object.sha;
-
             // Build release body
             const lines = ['## Included releases\n'];
             for (const [crate, { tag, version }] of Object.entries(crateTags)) {
@@ -246,7 +241,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: relTag,
-              target_commitish: targetCommitish,
+              target_commitish: context.sha,
               name: relTag,
               body,
               draft: true,
