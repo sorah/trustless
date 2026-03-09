@@ -10,30 +10,11 @@ jobs:
     with:
       build: true
 
-  release-plz:
+  release:
     needs: [test]
-    runs-on: ubuntu-latest
-    environment:
-      name: crates-io
+    uses: ./.github/workflows/_release.yml
+    secrets: inherit
     permissions:
       contents: write
       id-token: write
-    steps:
-      - uses: actions/create-github-app-token@bf559f85448f9380bcfa2899dbdc01eb5b37be3a # v3.0.0-beta.2
-        id: generate-token
-        with:
-          app-id: ${{ secrets.APP_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-          token: ${{ steps.generate-token.outputs.token }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: rust-lang/crates-io-auth-action@b7e9a28eded4986ec6b1fa40eeee8f8f165559ec # v1.0.3
-        id: auth
-      - uses: release-plz/action@f708778669256143d984cce4b23592637532e040 # v0.5.127
-        with:
-          command: release
-        env:
-          GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+      actions: read

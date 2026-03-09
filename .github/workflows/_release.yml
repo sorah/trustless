@@ -1,0 +1,276 @@
+name: release
+
+on:
+  workflow_call:
+    outputs:
+      releases:
+        description: 'JSON array of releases from release-plz'
+        value: ${{ jobs.release-plz.outputs.releases }}
+
+jobs:
+  release-plz:
+    runs-on: ubuntu-latest
+    environment:
+      name: crates-io
+    permissions:
+      contents: write
+      id-token: write
+    outputs:
+      releases: ${{ steps.release-plz.outputs.releases }}
+      trustless_released: ${{ steps.check-trustless.outputs.result }}
+    steps:
+      - uses: actions/create-github-app-token@bf559f85448f9380bcfa2899dbdc01eb5b37be3a # v3.0.0-beta.2
+        id: generate-token
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          token: ${{ steps.generate-token.outputs.token }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: rust-lang/crates-io-auth-action@b7e9a28eded4986ec6b1fa40eeee8f8f165559ec # v1.0.3
+        id: auth
+      - uses: release-plz/action@f708778669256143d984cce4b23592637532e040 # v0.5.127
+        id: release-plz
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+      - name: Check if trustless was released
+        id: check-trustless
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        env:
+          RELEASES_JSON: ${{ steps.release-plz.outputs.releases }}
+        with:
+          result-encoding: string
+          script: |
+            const releases = JSON.parse(process.env.RELEASES_JSON || '[]');
+            return releases.some(r => r.package_name === 'trustless') ? 'true' : 'false';
+
+  wait-binaries:
+    needs: [release-plz]
+    if: needs.release-plz.outputs.trustless_released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      crate_tags: ${{ steps.matrix.outputs.crate_tags }}
+      trustless_tag: ${{ steps.matrix.outputs.trustless_tag }}
+    steps:
+      - name: Determine release matrix
+        id: matrix
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        env:
+          RELEASES_JSON: ${{ needs.release-plz.outputs.releases }}
+        with:
+          script: |
+            const releases = JSON.parse(process.env.RELEASES_JSON);
+            const binaryCrates = ['trustless', 'trustless-provider-filesystem', 'trustless-provider-lambda'];
+            const crateTags = {};
+
+            for (const crate of binaryCrates) {
+              const rel = releases.find(r => r.package_name === crate);
+              if (rel) {
+                crateTags[crate] = { tag: rel.tag, version: rel.version };
+              } else {
+                // Find latest existing tag for this crate
+                const { data: refs } = await github.rest.git.listMatchingRefs({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `tags/${crate}/v`,
+                });
+                if (refs.length === 0) {
+                  core.setFailed(`No tag found for ${crate}`);
+                  return;
+                }
+                // refs are sorted lexicographically; last entry is latest
+                const latestRef = refs[refs.length - 1].ref;
+                const latestTag = latestRef.replace('refs/tags/', '');
+                const version = latestTag.replace(`${crate}/v`, '');
+                crateTags[crate] = { tag: latestTag, version };
+              }
+            }
+
+            core.setOutput('crate_tags', JSON.stringify(crateTags));
+            core.setOutput('trustless_tag', crateTags['trustless'].tag);
+            core.info(`Crate tags: ${JSON.stringify(crateTags, null, 2)}`);
+
+      - name: Wait for binaries workflows
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        env:
+          CRATE_TAGS: ${{ steps.matrix.outputs.crate_tags }}
+        with:
+          script: |
+            const crateTags = JSON.parse(process.env.CRATE_TAGS);
+            const tags = Object.values(crateTags).map(v => v.tag);
+
+            const maxWait = 30 * 60 * 1000; // 30 minutes
+            const interval = 30 * 1000; // 30 seconds
+            const start = Date.now();
+
+            while (Date.now() - start < maxWait) {
+              const pending = [];
+
+              for (const tag of tags) {
+                const { data: { workflow_runs: runs } } = await github.rest.actions.listWorkflowRuns({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: 'binaries.yml',
+                  branch: tag,
+                  event: 'push',
+                  per_page: 1,
+                });
+
+                if (runs.length === 0) {
+                  pending.push(`${tag} (no run found)`);
+                  continue;
+                }
+
+                const run = runs[0];
+                if (run.status !== 'completed') {
+                  pending.push(`${tag} (${run.status})`);
+                  continue;
+                }
+
+                if (run.conclusion !== 'success') {
+                  core.setFailed(`Binaries workflow for ${tag} failed: ${run.conclusion} (${run.html_url})`);
+                  return;
+                }
+              }
+
+              if (pending.length === 0) {
+                core.info('All binaries workflows completed successfully');
+                return;
+              }
+
+              core.info(`Waiting for: ${pending.join(', ')}`);
+              await new Promise(r => setTimeout(r, interval));
+            }
+
+            core.setFailed('Timed out waiting for binaries workflows');
+
+  release-bundle:
+    needs: [wait-binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: combined-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Download and combine binaries
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CRATE_TAGS: ${{ needs.wait-binaries.outputs.crate_tags }}
+        run: |
+          set -euo pipefail
+
+          targets=(
+            x86_64-unknown-linux-musl
+            aarch64-unknown-linux-musl
+            aarch64-apple-darwin
+          )
+          crates=(trustless trustless-provider-filesystem trustless-provider-lambda)
+
+          for target in "${targets[@]}"; do
+            workdir="$(mktemp -d)"
+            for crate in "${crates[@]}"; do
+              tag="$(echo "$CRATE_TAGS" | jq -r --arg c "$crate" '.[$c].tag')"
+              asset="${crate}-${target}.tar.gz"
+              echo "Downloading ${asset} from release ${tag}"
+              gh release download "$tag" --pattern "$asset" --dir "$workdir"
+              tar -xzf "${workdir}/${asset}" -C "$workdir"
+              rm "${workdir}/${asset}"
+            done
+            tar -czf "trustless-${target}.tar.gz" -C "$workdir" .
+            rm -rf "$workdir"
+          done
+
+      - name: Create combined release
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        env:
+          CRATE_TAGS: ${{ needs.wait-binaries.outputs.crate_tags }}
+          TRUSTLESS_TAG: ${{ needs.wait-binaries.outputs.trustless_tag }}
+        with:
+          script: |
+            const fs = require('fs');
+            const crateTags = JSON.parse(process.env.CRATE_TAGS);
+            const trustlessTag = process.env.TRUSTLESS_TAG;
+
+            // Determine rel/ tag with sequential number
+            const today = new Date().toISOString().slice(0, 10).replace(/-/g, '.');
+            const prefix = `rel/${today}.`;
+
+            // Find existing rel/ tags for today
+            const { data: refs } = await github.rest.git.listMatchingRefs({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `tags/${prefix}`,
+            });
+
+            let seq = 1;
+            for (const ref of refs) {
+              const tagName = ref.ref.replace('refs/tags/', '');
+              const num = parseInt(tagName.replace(`${prefix}`, ''), 10);
+              if (!isNaN(num) && num >= seq) {
+                seq = num + 1;
+              }
+            }
+            const relTag = `${prefix}${String(seq).padStart(2, '0')}`;
+
+            // Get commit SHA from trustless tag
+            const { data: tagRef } = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `tags/${trustlessTag}`,
+            });
+            const targetCommitish = tagRef.object.sha;
+
+            // Build release body
+            const lines = ['## Included releases\n'];
+            for (const [crate, { tag, version }] of Object.entries(crateTags)) {
+              const url = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/tag/${encodeURIComponent(tag)}`;
+              lines.push(`- [${crate} v${version}](${url})`);
+            }
+            const body = lines.join('\n');
+
+            // Create draft release
+            const { data: release } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: relTag,
+              target_commitish: targetCommitish,
+              name: relTag,
+              body,
+              draft: true,
+            });
+
+            core.info(`Created draft release: ${release.html_url}`);
+
+            // Upload combined tarballs
+            const targets = [
+              'x86_64-unknown-linux-musl',
+              'aarch64-unknown-linux-musl',
+              'aarch64-apple-darwin',
+            ];
+            for (const target of targets) {
+              const assetName = `trustless-${target}.tar.gz`;
+              const data = fs.readFileSync(assetName);
+              await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: release.id,
+                name: assetName,
+                data,
+              });
+              core.info(`Uploaded ${assetName}`);
+            }
+
+            core.info(`Release: ${release.html_url}`);

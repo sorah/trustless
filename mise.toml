@@ -1,0 +1,4 @@
+[tools]
+actionlint = "latest"
+hk = "latest"
+pkl = "latest"
