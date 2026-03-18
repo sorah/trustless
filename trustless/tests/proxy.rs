@@ -443,6 +443,44 @@ async fn test_hops_below_threshold_allowed() {
     assert_eq!(body, "4", "hops should be incremented: {body}");
 }
 
+#[tokio::test]
+async fn test_cookie_header_forwarded() {
+    let backend = axum::Router::new().route(
+        "/cookies",
+        axum::routing::get(|headers: axum::http::HeaderMap| async move {
+            let cookies: Vec<String> = headers
+                .get_all(http::header::COOKIE)
+                .iter()
+                .map(|v| v.to_str().unwrap().to_string())
+                .collect();
+            cookies.join("\n")
+        }),
+    );
+    let (backend_addr, _backend_handle) = start_mock_backend(backend).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
+    route_table
+        .add_route("cookie.lo.dev.invalid", backend_addr, None, false, false)
+        .unwrap();
+
+    let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
+
+    // Single cookie header passes through unchanged
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("http://{proxy_addr}/cookies"))
+        .header("Host", "cookie.lo.dev.invalid")
+        .header(http::header::COOKIE, "a=1; b=2")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert_eq!(body, "a=1; b=2", "cookie header should be forwarded as-is");
+}
+
 async fn ws_echo_handler(ws: axum::extract::WebSocketUpgrade) -> impl axum::response::IntoResponse {
     ws.on_upgrade(|mut socket| async move {
         use axum::extract::ws::Message;

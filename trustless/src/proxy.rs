@@ -326,6 +326,40 @@ fn strip_hop_by_hop_headers(headers: &mut http::HeaderMap, preserve_upgrade: boo
     }
 }
 
+/// Combine multiple Cookie header fields from an HTTP/2 request into a single
+/// header, per RFC 9113 section 8.2.3.
+///
+/// HTTP/2 allows the Cookie header to be split into separate fields for better
+/// HPACK compression. Before forwarding to an HTTP/1.1 backend, they must be
+/// concatenated with "; ".
+fn combine_h2_cookie_headers(version: http::Version, headers: &mut http::HeaderMap) {
+    if version != http::Version::HTTP_2 {
+        return;
+    }
+
+    let values: Vec<http::HeaderValue> = headers
+        .get_all(http::header::COOKIE)
+        .iter()
+        .cloned()
+        .collect();
+    if values.len() <= 1 {
+        return;
+    }
+
+    let mut combined = Vec::new();
+    for (i, value) in values.iter().enumerate() {
+        if i > 0 {
+            combined.extend_from_slice(b"; ");
+        }
+        combined.extend_from_slice(value.as_bytes());
+    }
+
+    headers.remove(http::header::COOKIE);
+    if let Ok(val) = http::HeaderValue::from_bytes(&combined) {
+        headers.insert(http::header::COOKIE, val);
+    }
+}
+
 async fn handle_request(
     state: std::sync::Arc<ProxyState>,
     client_addr: std::net::SocketAddr,
@@ -342,6 +376,7 @@ async fn handle_request(
     );
 
     strip_hop_by_hop_headers(&mut parts.headers, false);
+    combine_h2_cookie_headers(parts.version, &mut parts.headers);
     parts.headers.remove(HOPS_HEADER);
 
     let forwarded = build_forwarded_headers(client_addr, original_host, "https");
@@ -407,6 +442,7 @@ async fn handle_upgrade(
     );
 
     strip_hop_by_hop_headers(&mut parts.headers, true);
+    combine_h2_cookie_headers(parts.version, &mut parts.headers);
     parts.headers.remove(HOPS_HEADER);
 
     // We need to use hyper directly for upgrade support
@@ -722,5 +758,54 @@ mod tests {
         );
         let forwarded = headers.get("Forwarded").unwrap().to_str().unwrap();
         assert!(forwarded.contains("proto=https"));
+    }
+
+    #[test]
+    fn test_combine_h2_cookies_no_cookies() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(http::header::CONTENT_TYPE, "text/plain".parse().unwrap());
+        combine_h2_cookie_headers(http::Version::HTTP_2, &mut headers);
+        assert!(headers.get(http::header::COOKIE).is_none());
+    }
+
+    #[test]
+    fn test_combine_h2_cookies_single_cookie() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(http::header::COOKIE, "a=1".parse().unwrap());
+        combine_h2_cookie_headers(http::Version::HTTP_2, &mut headers);
+        assert_eq!(
+            headers.get(http::header::COOKIE).unwrap().to_str().unwrap(),
+            "a=1"
+        );
+    }
+
+    #[test]
+    fn test_combine_h2_cookies_multiple_h2() {
+        let mut headers = http::HeaderMap::new();
+        headers.append(http::header::COOKIE, "a=1".parse().unwrap());
+        headers.append(http::header::COOKIE, "b=2".parse().unwrap());
+        headers.append(http::header::COOKIE, "c=3".parse().unwrap());
+        combine_h2_cookie_headers(http::Version::HTTP_2, &mut headers);
+        let values: Vec<_> = headers
+            .get_all(http::header::COOKIE)
+            .iter()
+            .cloned()
+            .collect();
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].to_str().unwrap(), "a=1; b=2; c=3");
+    }
+
+    #[test]
+    fn test_combine_h2_cookies_skipped_for_http11() {
+        let mut headers = http::HeaderMap::new();
+        headers.append(http::header::COOKIE, "a=1".parse().unwrap());
+        headers.append(http::header::COOKIE, "b=2".parse().unwrap());
+        combine_h2_cookie_headers(http::Version::HTTP_11, &mut headers);
+        let values: Vec<_> = headers
+            .get_all(http::header::COOKIE)
+            .iter()
+            .cloned()
+            .collect();
+        assert_eq!(values.len(), 2, "HTTP/1.1 cookies should be left as-is");
     }
 }
