@@ -278,7 +278,7 @@ mod executor {
                 domain_suffix,
             } => {
                 eprintln!(
-                    "trustless: https://{}:{} -> 127.0.0.1:{}",
+                    "trustless: https://{}:{} -> localhost:{}",
                     hostname, proxy_port, port
                 );
                 execute(hostname, port, proxy_port, domain_suffix, params)

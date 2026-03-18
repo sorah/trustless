@@ -1,3 +1,7 @@
+/// Stagger delay for happy eyeballs (RFC 6555): start the second address family
+/// after this duration if the first hasn't connected yet.
+const HAPPY_EYEBALLS_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
+
 const VIA_VALUE: &str = "1.1 trustless";
 
 #[derive(thiserror::Error, Debug)]
@@ -120,6 +124,101 @@ pub struct ProxyState {
     pub route_table: crate::route::RouteTable,
     pub registry: crate::provider::ProviderRegistry,
     pub client: reqwest::Client,
+}
+
+/// Custom DNS resolver that returns both IPv6 and IPv4 loopback addresses for
+/// "localhost", enabling hyper-util's built-in happy eyeballs (RFC 6555) to race
+/// connections to backends that may listen on either `[::1]` or `127.0.0.1`.
+pub(crate) struct LoopbackResolver;
+
+impl reqwest::dns::Resolve for LoopbackResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        if name.as_str() == "localhost" {
+            let addrs: reqwest::dns::Addrs = Box::new(
+                [
+                    std::net::SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, 0)),
+                    std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 0)),
+                ]
+                .into_iter(),
+            );
+            Box::pin(std::future::ready(Ok(addrs)))
+        } else {
+            // Delegate to the default GAI resolver for non-localhost names.
+            // This path is not expected in practice since we only use localhost
+            // URLs for loopback backends.
+            reqwest::dns::Resolve::resolve(&crate::proxy::GaiResolver::default(), name)
+        }
+    }
+}
+
+/// Thin wrapper around hyper-util's GAI resolver, re-exported as a
+/// `reqwest::dns::Resolve` impl for use as fallback in `LoopbackResolver`.
+struct GaiResolver(hyper_util::client::legacy::connect::dns::GaiResolver);
+
+impl Default for GaiResolver {
+    fn default() -> Self {
+        Self(hyper_util::client::legacy::connect::dns::GaiResolver::new())
+    }
+}
+
+impl reqwest::dns::Resolve for GaiResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        use std::str::FromStr as _;
+        use tower::Service as _;
+        let mut inner = self.0.clone();
+        Box::pin(async move {
+            let name = hyper_util::client::legacy::connect::dns::Name::from_str(name.as_str())
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+            let addrs: reqwest::dns::Addrs = inner
+                .call(name)
+                .await
+                .map(|addrs| Box::new(addrs) as reqwest::dns::Addrs)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+            Ok(addrs)
+        })
+    }
+}
+
+/// Connect to a backend, trying both IPv4 and IPv6 loopback with a happy
+/// eyeballs stagger when the backend address is on the loopback interface.
+async fn connect_loopback(backend: std::net::SocketAddr) -> std::io::Result<tokio::net::TcpStream> {
+    if !backend.ip().is_loopback() {
+        return tokio::net::TcpStream::connect(backend).await;
+    }
+
+    let port = backend.port();
+    let v6_addr = std::net::SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, port));
+    let v4_addr = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port));
+
+    // Start IPv6 first (preferred), stagger IPv4 after HAPPY_EYEBALLS_DELAY.
+    let v6 = tokio::net::TcpStream::connect(v6_addr);
+    tokio::pin!(v6);
+
+    // Wait up to the stagger delay for IPv6 to connect.
+    match tokio::time::timeout(HAPPY_EYEBALLS_DELAY, &mut v6).await {
+        Ok(Ok(stream)) => return Ok(stream),
+        Ok(Err(_v6_err)) => {
+            // IPv6 failed immediately, try IPv4 only.
+            return tokio::net::TcpStream::connect(v4_addr).await;
+        }
+        Err(_timeout) => {
+            // IPv6 still pending — race it against IPv4.
+        }
+    }
+
+    let v4 = tokio::net::TcpStream::connect(v4_addr);
+    tokio::pin!(v4);
+
+    tokio::select! {
+        result = &mut v6 => match result {
+            Ok(stream) => Ok(stream),
+            Err(_) => v4.await,
+        },
+        result = &mut v4 => match result {
+            Ok(stream) => Ok(stream),
+            Err(_) => v6.await,
+        },
+    }
 }
 
 pub fn proxy_router(state: ProxyState) -> axum::Router {
@@ -369,11 +468,12 @@ async fn handle_request(
     hops: u32,
 ) -> Result<axum::response::Response, ProxyError> {
     let (mut parts, body) = req.into_parts();
-    let url = format!(
-        "http://{}{}",
-        backend,
-        parts.uri.path_and_query().map_or("/", |pq| pq.as_str())
-    );
+    let path = parts.uri.path_and_query().map_or("/", |pq| pq.as_str());
+    let url = if backend.ip().is_loopback() {
+        format!("http://localhost:{}{}", backend.port(), path)
+    } else {
+        format!("http://{}{}", backend, path)
+    };
 
     strip_hop_by_hop_headers(&mut parts.headers, false);
     combine_h2_cookie_headers(parts.version, &mut parts.headers);
@@ -466,7 +566,7 @@ async fn handle_upgrade(
         .body(http_body_util::Empty::<bytes::Bytes>::new())
         .unwrap();
 
-    let stream = match tokio::net::TcpStream::connect(backend.to_string()).await {
+    let stream = match connect_loopback(backend).await {
         Ok(s) => s,
         Err(e) => {
             return Err(ProxyError::BackendConnect {

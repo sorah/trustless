@@ -115,7 +115,10 @@ async fn run_start_async(args: &ProxyStartArgs) -> anyhow::Result<()> {
     let proxy_state = crate::proxy::ProxyState {
         route_table: route_table.clone(),
         registry: registry.clone(),
-        client: reqwest::Client::new(),
+        client: reqwest::Client::builder()
+            .dns_resolver(std::sync::Arc::new(crate::proxy::LoopbackResolver))
+            .build()
+            .expect("failed to build reqwest client"),
     };
     let proxy_app = crate::proxy::proxy_router(proxy_state);
 
