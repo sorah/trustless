@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2](https://github.com/sorah/trustless/compare/trustless/v0.3.1...trustless/v0.3.2) - 2026-03-19
+
+### Other
+
+- Merge pull request #2 from sorah/release-plz-2026-03-18T07-05-12Z
+- try both IPv4 and IPv6 loopback when connecting to backends
+
 ## [0.3.1](https://github.com/sorah/trustless/compare/trustless/v0.3.0...trustless/v0.3.1) - 2026-03-18
 
 ### Other
