@@ -11,7 +11,7 @@ readme = "README.md"
 keywords = ["trustless"]
 
 [workspace.dependencies]
-trustless-protocol = { version = "0.2.0", path = "trustless-protocol" }
+trustless-protocol = { version = "0.2.1", path = "trustless-protocol" }
 anyhow = "1"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
