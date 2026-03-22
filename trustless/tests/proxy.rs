@@ -270,9 +270,9 @@ async fn test_forwarded_headers_present() {
 
     let body = resp.text().await.unwrap();
     assert!(body.contains("xff=127.0.0.1"), "body: {body}");
-    assert!(body.contains("xfp=http"), "body: {body}");
+    assert!(body.contains("xfp=https"), "body: {body}");
     assert!(body.contains("xfh=headers.lo.dev.invalid"), "body: {body}");
-    assert!(body.contains("proto=http"), "body: {body}");
+    assert!(body.contains("proto=https"), "body: {body}");
     // Original Host preserved
     assert!(body.contains("host=headers.lo.dev.invalid"), "body: {body}");
 }
