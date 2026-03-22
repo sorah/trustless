@@ -381,12 +381,12 @@ fn build_forwarded_headers(
     headers.insert("X-Forwarded-Host", xfh);
 
     // Forwarded: append to existing chain
-    let new_element = format!(
-        "for={};host=\"{}\";proto={}",
-        client_addr.ip(),
-        original_host,
-        proto
-    );
+    // RFC 7239 §6: IPv6 addresses must be quoted and bracketed
+    let for_value = match client_addr.ip() {
+        std::net::IpAddr::V4(v4) => v4.to_string(),
+        std::net::IpAddr::V6(v6) => format!("\"[{v6}]\""),
+    };
+    let new_element = format!("for={for_value};host=\"{original_host}\";proto={proto}");
     let forwarded = match original_headers
         .get("forwarded")
         .and_then(|v| v.to_str().ok())
@@ -900,6 +900,25 @@ mod tests {
         );
         let forwarded = headers.get("Forwarded").unwrap().to_str().unwrap();
         assert!(forwarded.contains("proto=https"));
+    }
+
+    #[test]
+    fn test_forwarded_headers_ipv6_client() {
+        let addr: std::net::SocketAddr = "[::1]:12345".parse().unwrap();
+        let orig = http::HeaderMap::new();
+        let headers = build_forwarded_headers(&orig, addr, "app.example.com", "https");
+
+        // X-Forwarded-For uses bare IP (de-facto convention)
+        assert_eq!(
+            headers.get("X-Forwarded-For").unwrap().to_str().unwrap(),
+            "::1"
+        );
+        // Forwarded uses RFC 7239 §6 format: quoted and bracketed
+        let forwarded = headers.get("Forwarded").unwrap().to_str().unwrap();
+        assert!(
+            forwarded.contains("for=\"[::1]\""),
+            "IPv6 in Forwarded must be quoted and bracketed per RFC 7239, got: {forwarded}"
+        );
     }
 
     #[test]
