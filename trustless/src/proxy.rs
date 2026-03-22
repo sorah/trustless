@@ -350,28 +350,52 @@ async fn proxy_handler(
 }
 
 fn build_forwarded_headers(
+    original_headers: &http::HeaderMap,
     client_addr: std::net::SocketAddr,
     original_host: &str,
     proto: &str,
 ) -> http::HeaderMap {
     let mut headers = http::HeaderMap::new();
-    headers.insert(
-        "X-Forwarded-For",
-        client_addr.ip().to_string().parse().unwrap(),
+
+    // X-Forwarded-For: append to existing chain
+    let xff = match original_headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+    {
+        Some(existing) => format!("{}, {}", existing, client_addr.ip()),
+        None => client_addr.ip().to_string(),
+    };
+    headers.insert("X-Forwarded-For", xff.parse().unwrap());
+
+    // X-Forwarded-Proto / X-Forwarded-Host: preserve existing if present
+    let xfp = original_headers
+        .get("x-forwarded-proto")
+        .cloned()
+        .unwrap_or_else(|| proto.parse().unwrap());
+    headers.insert("X-Forwarded-Proto", xfp);
+
+    let xfh = original_headers
+        .get("x-forwarded-host")
+        .cloned()
+        .unwrap_or_else(|| original_host.parse().unwrap());
+    headers.insert("X-Forwarded-Host", xfh);
+
+    // Forwarded: append to existing chain
+    let new_element = format!(
+        "for={};host=\"{}\";proto={}",
+        client_addr.ip(),
+        original_host,
+        proto
     );
-    headers.insert("X-Forwarded-Proto", proto.parse().unwrap());
-    headers.insert("X-Forwarded-Host", original_host.parse().unwrap());
-    headers.insert(
-        "Forwarded",
-        format!(
-            "for={};host=\"{}\";proto={}",
-            client_addr.ip(),
-            original_host,
-            proto
-        )
-        .parse()
-        .unwrap(),
-    );
+    let forwarded = match original_headers
+        .get("forwarded")
+        .and_then(|v| v.to_str().ok())
+    {
+        Some(existing) => format!("{}, {}", existing, new_element),
+        None => new_element,
+    };
+    headers.insert("Forwarded", forwarded.parse().unwrap());
+
     headers
 }
 
@@ -479,14 +503,20 @@ async fn handle_request(
     combine_h2_cookie_headers(parts.version, &mut parts.headers);
     parts.headers.remove(HOPS_HEADER);
 
-    let forwarded = build_forwarded_headers(client_addr, original_host, "https");
+    let forwarded = build_forwarded_headers(&parts.headers, client_addr, original_host, "https");
+
+    // Remove headers that the proxy sets explicitly to avoid duplication
+    parts.headers.remove(http::header::HOST);
+    parts.headers.remove("x-forwarded-for");
+    parts.headers.remove("x-forwarded-proto");
+    parts.headers.remove("x-forwarded-host");
+    parts.headers.remove("forwarded");
 
     let mut request_builder = state
         .client
         .request(parts.method, &url)
         .headers(parts.headers.clone());
 
-    // Set forwarded headers (after cloning original headers so they take precedence)
     for (key, value) in &forwarded {
         request_builder = request_builder.header(key, value);
     }
@@ -530,8 +560,6 @@ async fn handle_upgrade(
     original_host: &str,
     hops: u32,
 ) -> Result<axum::response::Response, ProxyError> {
-    let forwarded = build_forwarded_headers(client_addr, original_host, "https");
-
     // Build the request to the backend
     let (mut parts, _body) = req.into_parts();
 
@@ -544,6 +572,15 @@ async fn handle_upgrade(
     strip_hop_by_hop_headers(&mut parts.headers, true);
     combine_h2_cookie_headers(parts.version, &mut parts.headers);
     parts.headers.remove(HOPS_HEADER);
+
+    let forwarded = build_forwarded_headers(&parts.headers, client_addr, original_host, "https");
+
+    // Remove headers that the proxy sets explicitly to avoid duplication
+    parts.headers.remove(http::header::HOST);
+    parts.headers.remove("x-forwarded-for");
+    parts.headers.remove("x-forwarded-proto");
+    parts.headers.remove("x-forwarded-host");
+    parts.headers.remove("forwarded");
 
     // We need to use hyper directly for upgrade support
     let uri: http::Uri = backend_url.parse().unwrap();
@@ -670,7 +707,8 @@ mod tests {
     #[test]
     fn test_forwarded_headers() {
         let addr: std::net::SocketAddr = "192.168.1.100:12345".parse().unwrap();
-        let headers = build_forwarded_headers(addr, "api.example.com", "http");
+        let orig = http::HeaderMap::new();
+        let headers = build_forwarded_headers(&orig, addr, "api.example.com", "http");
 
         assert_eq!(
             headers.get("X-Forwarded-For").unwrap().to_str().unwrap(),
@@ -850,7 +888,8 @@ mod tests {
     #[test]
     fn test_forwarded_headers_https() {
         let addr: std::net::SocketAddr = "10.0.0.1:443".parse().unwrap();
-        let headers = build_forwarded_headers(addr, "secure.example.com", "https");
+        let orig = http::HeaderMap::new();
+        let headers = build_forwarded_headers(&orig, addr, "secure.example.com", "https");
 
         assert_eq!(
             headers.get("X-Forwarded-Proto").unwrap().to_str().unwrap(),
@@ -907,5 +946,167 @@ mod tests {
             .cloned()
             .collect();
         assert_eq!(values.len(), 2, "HTTP/1.1 cookies should be left as-is");
+    }
+
+    #[tokio::test]
+    async fn test_host_header_not_duplicated() {
+        let backend = axum::Router::new().route(
+            "/host-check",
+            axum::routing::get(|headers: http::HeaderMap| async move {
+                let values: Vec<_> = headers
+                    .get_all(http::header::HOST)
+                    .iter()
+                    .filter_map(|v| v.to_str().ok())
+                    .collect();
+                format!("count={} values={}", values.len(), values.join(","))
+            }),
+        );
+        let backend_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend_addr = backend_listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(backend_listener, backend).await.unwrap();
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        let route_table = crate::route::RouteTable::new(dir.path().to_path_buf());
+        route_table
+            .add_route("my-app.lo.dev.invalid", backend_addr, None, false, false)
+            .unwrap();
+
+        let state = ProxyState {
+            route_table,
+            registry: crate::provider::ProviderRegistry::new(),
+            client: reqwest::Client::new(),
+        };
+        let app =
+            proxy_router(state).layer(axum::Extension(ClientAddr("127.0.0.1:0".parse().unwrap())));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!("http://{proxy_addr}/host-check"))
+            .header("Host", "my-app.lo.dev.invalid")
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), 200);
+        let body = resp.text().await.unwrap();
+        assert_eq!(
+            body, "count=1 values=my-app.lo.dev.invalid",
+            "Backend should receive exactly one Host header"
+        );
+    }
+
+    #[test]
+    fn test_forwarded_headers_chaining() {
+        let addr: std::net::SocketAddr = "192.168.1.100:12345".parse().unwrap();
+        let mut orig = http::HeaderMap::new();
+        orig.insert("x-forwarded-for", "10.0.0.1".parse().unwrap());
+        orig.insert(
+            "forwarded",
+            "for=10.0.0.1;host=\"upstream.example.com\";proto=https"
+                .parse()
+                .unwrap(),
+        );
+
+        let headers = build_forwarded_headers(&orig, addr, "api.example.com", "https");
+
+        assert_eq!(
+            headers.get("X-Forwarded-For").unwrap().to_str().unwrap(),
+            "10.0.0.1, 192.168.1.100",
+            "X-Forwarded-For should chain existing value"
+        );
+        let forwarded = headers.get("Forwarded").unwrap().to_str().unwrap();
+        assert!(
+            forwarded.starts_with("for=10.0.0.1;host=\"upstream.example.com\";proto=https, "),
+            "Forwarded should chain existing value"
+        );
+        assert!(forwarded.contains("for=192.168.1.100"));
+    }
+
+    #[test]
+    fn test_forwarded_headers_preserves_existing_proto_and_host() {
+        let addr: std::net::SocketAddr = "192.168.1.100:12345".parse().unwrap();
+        let mut orig = http::HeaderMap::new();
+        orig.insert("x-forwarded-proto", "https".parse().unwrap());
+        orig.insert("x-forwarded-host", "upstream.example.com".parse().unwrap());
+
+        let headers = build_forwarded_headers(&orig, addr, "api.example.com", "http");
+
+        assert_eq!(
+            headers.get("X-Forwarded-Proto").unwrap().to_str().unwrap(),
+            "https",
+            "X-Forwarded-Proto should preserve existing value"
+        );
+        assert_eq!(
+            headers.get("X-Forwarded-Host").unwrap().to_str().unwrap(),
+            "upstream.example.com",
+            "X-Forwarded-Host should preserve existing value"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_forwarded_headers_not_duplicated() {
+        let backend = axum::Router::new().route(
+            "/check",
+            axum::routing::get(|headers: http::HeaderMap| async move {
+                let xff_count = headers.get_all("x-forwarded-for").iter().count();
+                let xfp_count = headers.get_all("x-forwarded-proto").iter().count();
+                let xfh_count = headers.get_all("x-forwarded-host").iter().count();
+                let fwd_count = headers.get_all("forwarded").iter().count();
+                format!(
+                    "xff={} xfp={} xfh={} fwd={}",
+                    xff_count, xfp_count, xfh_count, fwd_count
+                )
+            }),
+        );
+        let backend_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend_addr = backend_listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(backend_listener, backend).await.unwrap();
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        let route_table = crate::route::RouteTable::new(dir.path().to_path_buf());
+        route_table
+            .add_route("my-app.lo.dev.invalid", backend_addr, None, false, false)
+            .unwrap();
+
+        let state = ProxyState {
+            route_table,
+            registry: crate::provider::ProviderRegistry::new(),
+            client: reqwest::Client::new(),
+        };
+        let app =
+            proxy_router(state).layer(axum::Extension(ClientAddr("127.0.0.1:0".parse().unwrap())));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!("http://{proxy_addr}/check"))
+            .header("Host", "my-app.lo.dev.invalid")
+            .header("X-Forwarded-For", "10.0.0.1")
+            .header("X-Forwarded-Proto", "https")
+            .header("X-Forwarded-Host", "original.example.com")
+            .header("Forwarded", "for=10.0.0.1;proto=https")
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), 200);
+        let body = resp.text().await.unwrap();
+        assert_eq!(
+            body, "xff=1 xfp=1 xfh=1 fwd=1",
+            "Each forwarded header should appear exactly once"
+        );
     }
 }
