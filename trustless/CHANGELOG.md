@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3](https://github.com/sorah/trustless/compare/trustless/v0.3.2...trustless/v0.3.3) - 2026-03-22
+
+### Other
+
+- fix proto assertions to match actual proxy behavior
+- quote IPv6 addresses in Forwarded header per RFC 7239
+- disable redirect following and system proxy on reqwest client
+- fix duplicate Host and X-Forwarded-* headers when forwarding
+
 ## [0.3.2](https://github.com/sorah/trustless/compare/trustless/v0.3.1...trustless/v0.3.2) - 2026-03-19
 
 ### Other
