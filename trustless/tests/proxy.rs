@@ -14,7 +14,10 @@ async fn start_mock_backend(
 async fn start_proxy(
     route_table: trustless::route::RouteTable,
 ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
     let state = trustless::proxy::ProxyState {
         route_table,
         registry: trustless::provider::ProviderRegistry::new(),
@@ -56,6 +59,45 @@ async fn test_end_to_end_forwarding() {
 
     assert_eq!(resp.status(), 200);
     assert_eq!(resp.text().await.unwrap(), "Hello from backend");
+}
+
+#[tokio::test]
+async fn test_redirect_passed_through() {
+    let backend = axum::Router::new().route(
+        "/old",
+        axum::routing::get(|| async { axum::response::Redirect::to("/new") }),
+    );
+    let (backend_addr, _backend_handle) = start_mock_backend(backend).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
+    route_table
+        .add_route("redir.lo.dev.invalid", backend_addr, None, false, false)
+        .unwrap();
+
+    let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
+
+    // Use a client that does NOT follow redirects so we can inspect the 3xx
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = client
+        .get(format!("http://{proxy_addr}/old"))
+        .header("Host", "redir.lo.dev.invalid")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.status(),
+        303,
+        "Proxy must pass redirect responses through, not follow them"
+    );
+    assert_eq!(
+        resp.headers().get("location").unwrap().to_str().unwrap(),
+        "/new"
+    );
 }
 
 #[tokio::test]

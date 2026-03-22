@@ -116,6 +116,8 @@ async fn run_start_async(args: &ProxyStartArgs) -> anyhow::Result<()> {
         route_table: route_table.clone(),
         registry: registry.clone(),
         client: reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
             .dns_resolver(std::sync::Arc::new(crate::proxy::LoopbackResolver))
             .build()
             .expect("failed to build reqwest client"),

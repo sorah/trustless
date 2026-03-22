@@ -859,7 +859,10 @@ mod tests {
         let state = ProxyState {
             route_table,
             registry: crate::provider::ProviderRegistry::new(),
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
         };
         let app =
             proxy_router(state).layer(axum::Extension(ClientAddr("127.0.0.1:0".parse().unwrap())));
@@ -976,7 +979,10 @@ mod tests {
         let state = ProxyState {
             route_table,
             registry: crate::provider::ProviderRegistry::new(),
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
         };
         let app =
             proxy_router(state).layer(axum::Extension(ClientAddr("127.0.0.1:0".parse().unwrap())));
@@ -1080,7 +1086,10 @@ mod tests {
         let state = ProxyState {
             route_table,
             registry: crate::provider::ProviderRegistry::new(),
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
         };
         let app =
             proxy_router(state).layer(axum::Extension(ClientAddr("127.0.0.1:0".parse().unwrap())));
