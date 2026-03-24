@@ -42,7 +42,9 @@ Error responses carry the `id` and an `error` object (no `method` tag):
 
 ### `initialize`
 
-Returns all certificates available in a key provider
+Returns all certificates available in a key provider.
+
+The proxy may call `initialize` multiple times on the same provider process to reload certificates (e.g. as certificates approach expiry or after a signing error indicates stale certificates). Providers must support repeated `initialize` calls and return the current set of available certificates each time.
 
 __Request:__
 
@@ -112,7 +114,7 @@ __Response:__
 ## Provider Lifecycle
 
 - The provider process is spawned when the proxy starts or when a reload is triggered.
-- `initialize` is called once per spawn. The proxy caches all certificates from this response.
+- `initialize` is called at least once per spawn, and may be called again to reload certificates. The proxy caches all certificates from the most recent response.
 - `sign` is called many times during the provider's lifetime. Requests are serialized on the wire (one at a time per provider process).
 - If the provider process crashes, the proxy automatically restarts it with exponential backoff (1s initial, 2x multiplier, up to 300s max). Backoff resets after 60s of continuous healthy operation.
 - `trustless proxy reload` triggers a manual restart of all providers, bypassing backoff.
