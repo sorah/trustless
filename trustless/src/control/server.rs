@@ -592,4 +592,128 @@ mod tests {
         assert!(json.ok);
         assert!(json.results.is_empty());
     }
+
+    fn make_reload_request() -> axum::http::Request<axum::body::Body> {
+        axum::http::Request::builder()
+            .method("POST")
+            .uri("/reload")
+            .header("host", "trustless")
+            .body(axum::body::Body::empty())
+            .unwrap()
+    }
+
+    async fn reload_response(app: axum::Router) -> super::super::ReloadResponse {
+        let resp = app.oneshot(make_reload_request()).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    #[tokio::test]
+    async fn reload_detects_added_profile() {
+        let (state, _rx, dir) = test_state();
+
+        // Write a profile to disk
+        let profiles_dir = dir.path().join("profiles.d");
+        std::fs::create_dir_all(&profiles_dir).unwrap();
+        std::fs::write(
+            profiles_dir.join("test-provider.json"),
+            r#"{"command": ["/nonexistent/trustless-test-provider"]}"#,
+        )
+        .unwrap();
+
+        let app = dispatch_router(state, stub_proxy());
+        let json = reload_response(app).await;
+
+        // The provider spawn will fail, but resilient mode still registers it
+        let result = json
+            .results
+            .get("test-provider")
+            .expect("expected test-provider in results");
+        assert_eq!(result.action.as_deref(), Some("added"));
+    }
+
+    #[tokio::test]
+    async fn reload_detects_removed_profile() {
+        let (state, _rx, dir) = test_state();
+
+        // Write a profile, reload to add it (spawn fails but resilient mode registers)
+        let profiles_dir = dir.path().join("profiles.d");
+        std::fs::create_dir_all(&profiles_dir).unwrap();
+        std::fs::write(
+            profiles_dir.join("test-provider.json"),
+            r#"{"command": ["/nonexistent/trustless-test-provider"]}"#,
+        )
+        .unwrap();
+
+        // First reload: adds the provider
+        let app = dispatch_router(state.clone(), stub_proxy());
+        let json = reload_response(app).await;
+        let result = json
+            .results
+            .get("test-provider")
+            .expect("expected test-provider in results");
+        assert_eq!(result.action.as_deref(), Some("added"));
+
+        // Verify the orchestrator now knows about this provider
+        let profiles = state.orchestrator.provider_profiles();
+        assert!(
+            profiles.contains_key("test-provider"),
+            "provider should be registered after reload"
+        );
+
+        // Delete the profile from disk
+        std::fs::remove_file(profiles_dir.join("test-provider.json")).unwrap();
+
+        // Second reload: should detect the removal
+        let app = dispatch_router(state.clone(), stub_proxy());
+        let json = reload_response(app).await;
+        assert!(json.ok, "reload should succeed: {json:?}");
+        let result = json
+            .results
+            .get("test-provider")
+            .expect("expected test-provider in removal results");
+        assert_eq!(result.action.as_deref(), Some("removed"));
+        assert!(result.ok, "removal should succeed");
+
+        // Verify the provider is gone from the orchestrator
+        let profiles = state.orchestrator.provider_profiles();
+        assert!(
+            !profiles.contains_key("test-provider"),
+            "provider should be removed after reload"
+        );
+    }
+
+    #[tokio::test]
+    async fn reload_detects_changed_profile() {
+        let (state, _rx, dir) = test_state();
+
+        let profiles_dir = dir.path().join("profiles.d");
+        std::fs::create_dir_all(&profiles_dir).unwrap();
+        std::fs::write(
+            profiles_dir.join("test-provider.json"),
+            r#"{"command": ["/nonexistent/trustless-test-provider-v1"]}"#,
+        )
+        .unwrap();
+
+        // First reload: adds the provider
+        let app = dispatch_router(state.clone(), stub_proxy());
+        let _ = reload_response(app).await;
+
+        // Change the profile on disk
+        std::fs::write(
+            profiles_dir.join("test-provider.json"),
+            r#"{"command": ["/nonexistent/trustless-test-provider-v2"]}"#,
+        )
+        .unwrap();
+
+        // Second reload: should detect the change
+        let app = dispatch_router(state.clone(), stub_proxy());
+        let json = reload_response(app).await;
+        let result = json
+            .results
+            .get("test-provider")
+            .expect("expected test-provider in results");
+        assert_eq!(result.action.as_deref(), Some("restarted"));
+    }
 }
