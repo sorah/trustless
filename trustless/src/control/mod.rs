@@ -10,7 +10,7 @@ pub struct OkResponse {
     pub ok: bool,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct ReloadProviderResult {
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -19,7 +19,7 @@ pub struct ReloadProviderResult {
     pub action: Option<String>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct ReloadResponse {
     pub ok: bool,
     pub results: std::collections::HashMap<String, ReloadProviderResult>,

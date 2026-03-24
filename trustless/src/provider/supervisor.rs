@@ -44,7 +44,9 @@ impl Supervisor {
 
             tokio::select! {
                 status = self.child.wait() => {
-                    self.handle_crash(status).await;
+                    if self.handle_crash(status).await {
+                        return;
+                    }
                 }
                 _ = self.cancel.cancelled() => {
                     self.handle_shutdown().await;
@@ -53,7 +55,9 @@ impl Supervisor {
                 Some(cmd) = self.command_rx.recv() => {
                     match cmd {
                         SupervisorCommand::Restart { reply } => {
-                            self.handle_restart_command(reply).await;
+                            if self.handle_restart_command(reply).await {
+                                return;
+                            }
                         }
                     }
                 }
@@ -69,7 +73,12 @@ impl Supervisor {
         }
     }
 
-    async fn handle_crash(&mut self, status: Result<std::process::ExitStatus, std::io::Error>) {
+    /// Handle a crashed provider process. Returns `true` if the supervisor was
+    /// cancelled during the backoff/respawn loop and should exit immediately.
+    async fn handle_crash(
+        &mut self,
+        status: Result<std::process::ExitStatus, std::io::Error>,
+    ) -> bool {
         let _ = (&mut self.stderr_task).await;
         let stderr_snapshot: Vec<String> =
             self.stderr_lines.lock().unwrap().iter().cloned().collect();
@@ -94,13 +103,15 @@ impl Supervisor {
         );
 
         let _ = self.healthy_since.take();
-        self.backoff_respawn_loop().await;
+        self.backoff_respawn_loop().await
     }
 
+    /// Handle a manual restart command. Returns `true` if the supervisor was
+    /// cancelled during the backoff/respawn loop and should exit immediately.
     async fn handle_restart_command(
         &mut self,
         reply: tokio::sync::oneshot::Sender<Result<(), crate::Error>>,
-    ) {
+    ) -> bool {
         tracing::debug!(provider = %self.name, "received restart command");
         let _ = self.child.kill().await;
         let _ = self.child.wait().await;
@@ -114,11 +125,12 @@ impl Supervisor {
             Ok(result) => {
                 self.apply_spawn_result(result);
                 let _ = reply.send(Ok(()));
+                false
             }
             Err(spawn_err) => {
                 self.record_spawn_failure("manual restart failed", spawn_err.stderr_snapshot);
                 let _ = reply.send(Err(spawn_err.error));
-                self.backoff_respawn_loop().await;
+                self.backoff_respawn_loop().await
             }
         }
     }
@@ -151,17 +163,14 @@ impl Supervisor {
 
     /// Retry spawning with exponential backoff until success or cancellation.
     /// Also handles manual restart commands received during backoff sleep.
-    async fn backoff_respawn_loop(&mut self) {
+    /// Returns `true` if cancelled, `false` if a respawn succeeded.
+    async fn backoff_respawn_loop(&mut self) -> bool {
         loop {
             tracing::info!(provider = %self.name, delay = ?self.backoff, "restarting after backoff");
             tokio::select! {
                 _ = tokio::time::sleep(self.backoff) => {}
                 _ = self.cancel.cancelled() => {
-                    // Cancelled during backoff — exit the supervisor entirely.
-                    // We can't return from run() here directly, but the caller
-                    // (handle_crash / handle_restart_command) returns to run(),
-                    // which will see cancel on the next select! iteration.
-                    return;
+                    return true;
                 }
                 Some(cmd) = self.command_rx.recv() => {
                     match cmd {
@@ -171,7 +180,7 @@ impl Supervisor {
                                 Ok(result) => {
                                     self.apply_spawn_result(result);
                                     let _ = reply.send(Ok(()));
-                                    return;
+                                    return false;
                                 }
                                 Err(spawn_err) => {
                                     let _ = reply.send(Err(spawn_err.error));
@@ -186,7 +195,7 @@ impl Supervisor {
             match self.respawn().await {
                 Ok(result) => {
                     self.apply_spawn_result(result);
-                    return;
+                    return false;
                 }
                 Err(spawn_err) => {
                     tracing::error!(provider = %self.name, "respawn failed: {}", spawn_err.error);
