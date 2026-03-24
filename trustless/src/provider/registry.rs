@@ -30,6 +30,7 @@ struct CertResolverEntry {
     issuer: String,
     serial: String,
     not_after: String,
+    not_after_epoch: Option<i64>,
     certified_key: std::sync::Arc<rustls::sign::CertifiedKey>,
 }
 
@@ -257,6 +258,20 @@ impl ProviderRegistry {
         inner.providers.remove(name);
     }
 
+    /// Returns the earliest `not_after` epoch (seconds since UNIX epoch) across
+    /// all certificates belonging to the given provider, or `None` if no expiry
+    /// information is available.
+    pub fn earliest_not_after_epoch(&self, provider_name: &str) -> Option<i64> {
+        let inner = self.inner.read().unwrap();
+        inner
+            .providers
+            .get(provider_name)?
+            .certificates
+            .iter()
+            .filter_map(|c| c.not_after_epoch)
+            .min()
+    }
+
     pub fn resolve_by_sni(
         &self,
         sni: Option<&str>,
@@ -369,7 +384,7 @@ fn parse_init_result(
             RemoteSigningKey::new(handle.clone(), cert_info.id.clone(), algorithm, schemes),
         );
 
-        let (issuer, serial, not_after) = parse_leaf_cert_metadata(&cert_chain[0]);
+        let (issuer, serial, not_after, not_after_epoch) = parse_leaf_cert_metadata(&cert_chain[0]);
 
         let certified_key =
             std::sync::Arc::new(rustls::sign::CertifiedKey::new(cert_chain, signing_key));
@@ -384,6 +399,7 @@ fn parse_init_result(
             issuer,
             serial,
             not_after,
+            not_after_epoch,
             certified_key,
         });
     }
@@ -403,7 +419,7 @@ fn parse_init_result(
 
 fn parse_leaf_cert_metadata(
     leaf_der: &rustls_pki_types::CertificateDer<'_>,
-) -> (String, String, String) {
+) -> (String, String, String, Option<i64>) {
     let unknown = "(unknown)".to_owned();
     match x509_parser::parse_x509_certificate(leaf_der.as_ref()) {
         Ok((_, cert)) => {
@@ -414,14 +430,15 @@ fn parse_leaf_cert_metadata(
                 .map(|b| format!("{b:02x}"))
                 .collect::<Vec<_>>()
                 .join(":");
+            let not_after_epoch = cert.validity().not_after.timestamp();
             let not_after = cert
                 .validity()
                 .not_after
                 .to_rfc2822()
                 .unwrap_or_else(|_| unknown.clone());
-            (issuer, serial, not_after)
+            (issuer, serial, not_after, Some(not_after_epoch))
         }
-        Err(_) => (unknown.clone(), unknown.clone(), unknown),
+        Err(_) => (unknown.clone(), unknown.clone(), unknown, None),
     }
 }
 

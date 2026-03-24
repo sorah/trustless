@@ -1,4 +1,6 @@
-use super::orchestrator::{SpawnError, SpawnResult, SupervisorCommand, spawn_init_register};
+use super::orchestrator::{
+    ProviderOrchestrator, SpawnError, SpawnResult, SupervisorCommand, spawn_init_register,
+};
 use super::registry::ProviderRegistry;
 use super::{ProviderError, ProviderErrorKind, ProviderErrorReport, ProviderState};
 
@@ -6,13 +8,16 @@ pub(super) struct Supervisor {
     pub(super) name: String,
     pub(super) profile: crate::config::Profile,
     pub(super) registry: ProviderRegistry,
+    pub(super) orchestrator: Option<ProviderOrchestrator>,
     pub(super) cancel: tokio_util::sync::CancellationToken,
     pub(super) command_rx: tokio::sync::mpsc::Receiver<SupervisorCommand>,
+    pub(super) client: std::sync::Arc<super::process::ProviderClient>,
     pub(super) child: tokio::process::Child,
     pub(super) stderr_task: tokio::task::JoinHandle<()>,
     pub(super) stderr_lines: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
     pub(super) backoff: std::time::Duration,
     pub(super) healthy_since: Option<std::time::Instant>,
+    pub(super) last_reinit: Option<std::time::Instant>,
 }
 
 impl Supervisor {
@@ -20,6 +25,7 @@ impl Supervisor {
         name: String,
         profile: crate::config::Profile,
         registry: ProviderRegistry,
+        orchestrator: Option<ProviderOrchestrator>,
         cancel: tokio_util::sync::CancellationToken,
         command_rx: tokio::sync::mpsc::Receiver<SupervisorCommand>,
         result: SpawnResult,
@@ -28,13 +34,16 @@ impl Supervisor {
             name,
             profile,
             registry,
+            orchestrator,
             cancel,
             command_rx,
+            client: result.client,
             child: result.child,
             stderr_task: result.stderr_task,
             stderr_lines: result.stderr_lines,
             backoff: BACKOFF_INITIAL,
             healthy_since: Some(std::time::Instant::now()),
+            last_reinit: None,
         }
     }
 
@@ -42,6 +51,7 @@ impl Supervisor {
         loop {
             self.reset_backoff_if_healthy();
 
+            let refresh_interval = self.compute_refresh_interval();
             tokio::select! {
                 status = self.child.wait() => {
                     if self.handle_crash(status).await {
@@ -59,7 +69,13 @@ impl Supervisor {
                                 return;
                             }
                         }
+                        SupervisorCommand::ReinitIfDue => {
+                            self.reinitialize("reinitializing provider (certificate refresh requested)").await;
+                        }
                     }
+                }
+                _ = tokio::time::sleep(refresh_interval) => {
+                    self.reinitialize("proactive certificate refresh").await;
                 }
             }
         }
@@ -161,6 +177,81 @@ impl Supervisor {
         let _ = (&mut self.stderr_task).await;
     }
 
+    /// Reinitialize the running provider process by calling `initialize` again
+    /// and re-registering certificates, without killing the process.
+    async fn reinitialize(&mut self, reason: &str) {
+        if !self.is_reinit_due() {
+            return;
+        }
+        tracing::info!(provider = %self.name, "{}", reason);
+        self.last_reinit = Some(std::time::Instant::now());
+
+        let init = match self.client.initialize().await {
+            Ok(init) => init,
+            Err(e) => {
+                tracing::error!(provider = %self.name, "reinitialize failed: {e}");
+                self.record_spawn_failure(&format!("reinitialize failed: {e}"), None);
+                return;
+            }
+        };
+
+        let error_sink = super::ProviderErrorSink::new(
+            self.registry.clone(),
+            self.name.clone(),
+            Some(self.stderr_lines.clone()),
+            self.orchestrator.clone(),
+        );
+        let handle = crate::signer::SigningWorker::start(
+            self.client.clone(),
+            std::time::Duration::from_secs(self.profile.sign_timeout_seconds),
+            Some(error_sink),
+        );
+        if let Err(e) = self.registry.replace_provider(&self.name, init, handle) {
+            tracing::error!(provider = %self.name, "reinitialize registration failed: {e}");
+        }
+    }
+
+    /// Check whether reinit is allowed (debounce window elapsed).
+    fn is_reinit_due(&self) -> bool {
+        match self.last_reinit {
+            Some(t) => t.elapsed() >= REINIT_DEBOUNCE,
+            None => true,
+        }
+    }
+
+    /// Compute the interval until the next proactive certificate refresh.
+    ///
+    /// Uses `remaining / 12` clamped to `[5min, 1hr]` with ±15% jitter.
+    /// Falls back to 1hr if no expiry information is available.
+    fn compute_refresh_interval(&self) -> std::time::Duration {
+        let base = match self.registry.earliest_not_after_epoch(&self.name) {
+            Some(epoch) => {
+                let now_epoch = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+                let remaining = (epoch - now_epoch).max(0) as u64;
+                let interval = remaining / 12;
+                let interval = interval.clamp(
+                    REFRESH_INTERVAL_MIN.as_secs(),
+                    REFRESH_INTERVAL_MAX.as_secs(),
+                );
+                std::time::Duration::from_secs(interval)
+            }
+            None => REFRESH_INTERVAL_MAX,
+        };
+
+        // Apply ±15% jitter using subsec_nanos as a cheap deterministic-ish source
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos();
+        // Map nanos to [-0.15, +0.15] range
+        let jitter_frac = (nanos as f64 / u32::MAX as f64) * 0.30 - 0.15;
+        let jittered = base.as_secs_f64() * (1.0 + jitter_frac);
+        std::time::Duration::from_secs_f64(jittered.max(1.0))
+    }
+
     /// Retry spawning with exponential backoff until success or cancellation.
     /// Also handles manual restart commands received during backoff sleep.
     /// Returns `true` if cancelled, `false` if a respawn succeeded.
@@ -188,6 +279,11 @@ impl Supervisor {
                                 }
                             }
                         }
+                        SupervisorCommand::ReinitIfDue => {
+                            // Process is dead during backoff — initialize RPC would fail.
+                            // The backoff loop is already working on a full respawn.
+                            continue;
+                        }
                     }
                 }
             }
@@ -211,6 +307,7 @@ impl Supervisor {
     }
 
     fn apply_spawn_result(&mut self, result: SpawnResult) {
+        self.client = result.client;
         self.child = result.child;
         self.stderr_task = result.stderr_task;
         self.stderr_lines = result.stderr_lines;
@@ -234,7 +331,13 @@ impl Supervisor {
 
     async fn respawn(&self) -> Result<SpawnResult, SpawnError> {
         tracing::info!(provider = %self.name, "spawning provider process");
-        spawn_init_register(&self.name, &self.profile, &self.registry).await
+        spawn_init_register(
+            &self.name,
+            &self.profile,
+            &self.registry,
+            self.orchestrator.clone(),
+        )
+        .await
     }
 }
 
@@ -244,6 +347,7 @@ pub(super) async fn run_recovering(
     name: String,
     profile: crate::config::Profile,
     registry: ProviderRegistry,
+    orchestrator: Option<ProviderOrchestrator>,
     cancel: tokio_util::sync::CancellationToken,
     mut command_rx: tokio::sync::mpsc::Receiver<SupervisorCommand>,
 ) {
@@ -258,10 +362,10 @@ pub(super) async fn run_recovering(
                 match cmd {
                     SupervisorCommand::Restart { reply } => {
                         backoff = BACKOFF_INITIAL;
-                        match spawn_init_register(&name, &profile, &registry).await {
+                        match spawn_init_register(&name, &profile, &registry, orchestrator.clone()).await {
                             Ok(result) => {
                                 let _ = reply.send(Ok(()));
-                                Supervisor::new(name, profile, registry, cancel, command_rx, result)
+                                Supervisor::new(name, profile, registry, orchestrator, cancel, command_rx, result)
                                     .run().await;
                                 return;
                             }
@@ -282,16 +386,29 @@ pub(super) async fn run_recovering(
                             }
                         }
                     }
+                    SupervisorCommand::ReinitIfDue => {
+                        // Process isn't running yet — initialize RPC would fail.
+                        // The recovery loop is already attempting full respawn.
+                        continue;
+                    }
                 }
             }
         }
 
-        match spawn_init_register(&name, &profile, &registry).await {
+        match spawn_init_register(&name, &profile, &registry, orchestrator.clone()).await {
             Ok(result) => {
                 tracing::info!(provider = %name, "provider recovered successfully");
-                Supervisor::new(name, profile, registry, cancel, command_rx, result)
-                    .run()
-                    .await;
+                Supervisor::new(
+                    name,
+                    profile,
+                    registry,
+                    orchestrator,
+                    cancel,
+                    command_rx,
+                    result,
+                )
+                .run()
+                .await;
                 return;
             }
             Err(spawn_err) => {
@@ -318,6 +435,9 @@ const BACKOFF_MAX: std::time::Duration = std::time::Duration::from_secs(300);
 const BACKOFF_MULTIPLIER: u32 = 2;
 const HEALTHY_RESET_DURATION: std::time::Duration = std::time::Duration::from_secs(60);
 const SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+const REINIT_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(30);
+const REFRESH_INTERVAL_MIN: std::time::Duration = std::time::Duration::from_secs(300);
+const REFRESH_INTERVAL_MAX: std::time::Duration = std::time::Duration::from_secs(3600);
 
 fn next_backoff(current: std::time::Duration) -> std::time::Duration {
     std::cmp::min(current * BACKOFF_MULTIPLIER, BACKOFF_MAX)
