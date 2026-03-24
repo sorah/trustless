@@ -219,37 +219,9 @@ impl Supervisor {
         }
     }
 
-    /// Compute the interval until the next proactive certificate refresh.
-    ///
-    /// Uses `remaining / 12` clamped to `[5min, 1hr]` with ±15% jitter.
-    /// Falls back to 1hr if no expiry information is available.
     fn compute_refresh_interval(&self) -> std::time::Duration {
-        let base = match self.registry.earliest_not_after_epoch(&self.name) {
-            Some(epoch) => {
-                let now_epoch = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs() as i64;
-                let remaining = (epoch - now_epoch).max(0) as u64;
-                let interval = remaining / 12;
-                let interval = interval.clamp(
-                    REFRESH_INTERVAL_MIN.as_secs(),
-                    REFRESH_INTERVAL_MAX.as_secs(),
-                );
-                std::time::Duration::from_secs(interval)
-            }
-            None => REFRESH_INTERVAL_MAX,
-        };
-
-        // Apply ±15% jitter using subsec_nanos as a cheap deterministic-ish source
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_nanos();
-        // Map nanos to [-0.15, +0.15] range
-        let jitter_frac = (nanos as f64 / u32::MAX as f64) * 0.30 - 0.15;
-        let jittered = base.as_secs_f64() * (1.0 + jitter_frac);
-        std::time::Duration::from_secs_f64(jittered.max(1.0))
+        let not_after_epoch = self.registry.earliest_not_after_epoch(&self.name);
+        compute_refresh_interval(not_after_epoch)
     }
 
     /// Retry spawning with exponential backoff until success or cancellation.
@@ -430,6 +402,39 @@ pub(super) async fn run_recovering(
     }
 }
 
+/// Compute the interval until the next proactive certificate refresh.
+///
+/// Uses `remaining / 12` clamped to `[5min, 1hr]` with ±15% jitter.
+/// Falls back to 1hr if no expiry information is available.
+fn compute_refresh_interval(not_after_epoch: Option<i64>) -> std::time::Duration {
+    let base = match not_after_epoch {
+        Some(epoch) => {
+            let now_epoch = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let remaining = (epoch - now_epoch).max(0) as u64;
+            let interval = remaining / 12;
+            let interval = interval.clamp(
+                REFRESH_INTERVAL_MIN.as_secs(),
+                REFRESH_INTERVAL_MAX.as_secs(),
+            );
+            std::time::Duration::from_secs(interval)
+        }
+        None => REFRESH_INTERVAL_MAX,
+    };
+
+    // Apply ±15% jitter using subsec_nanos as a cheap deterministic-ish source
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    // Map nanos to [-0.15, +0.15] range
+    let jitter_frac = (nanos as f64 / u32::MAX as f64) * 0.30 - 0.15;
+    let jittered = base.as_secs_f64() * (1.0 + jitter_frac);
+    std::time::Duration::from_secs_f64(jittered.max(1.0))
+}
+
 pub(super) const BACKOFF_INITIAL: std::time::Duration = std::time::Duration::from_secs(1);
 const BACKOFF_MAX: std::time::Duration = std::time::Duration::from_secs(300);
 const BACKOFF_MULTIPLIER: u32 = 2;
@@ -446,6 +451,66 @@ fn next_backoff(current: std::time::Duration) -> std::time::Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refresh_interval_no_expiry() {
+        let interval = compute_refresh_interval(None);
+        // Falls back to REFRESH_INTERVAL_MAX (1hr) ±15%
+        assert!(interval >= std::time::Duration::from_secs(3060)); // 3600 * 0.85
+        assert!(interval <= std::time::Duration::from_secs(4140)); // 3600 * 1.15
+    }
+
+    #[test]
+    fn refresh_interval_clamps_to_min() {
+        // 1 hour remaining → 3600/12 = 300s = 5min (REFRESH_INTERVAL_MIN)
+        let now_epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let interval = compute_refresh_interval(Some(now_epoch + 3600));
+        // 300s base ±15%
+        assert!(interval >= std::time::Duration::from_secs(255)); // 300 * 0.85
+        assert!(interval <= std::time::Duration::from_secs(345)); // 300 * 1.15
+    }
+
+    #[test]
+    fn refresh_interval_clamps_to_max() {
+        // 24 hours remaining → 86400/12 = 7200s, clamped to 3600s (REFRESH_INTERVAL_MAX)
+        let now_epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let interval = compute_refresh_interval(Some(now_epoch + 86400));
+        // 3600s base ±15%
+        assert!(interval >= std::time::Duration::from_secs(3060));
+        assert!(interval <= std::time::Duration::from_secs(4140));
+    }
+
+    #[test]
+    fn refresh_interval_mid_range() {
+        // 6 hours remaining → 21600/12 = 1800s (30min), within [5min, 1hr]
+        let now_epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let interval = compute_refresh_interval(Some(now_epoch + 21600));
+        // 1800s base ±15%
+        assert!(interval >= std::time::Duration::from_secs(1530)); // 1800 * 0.85
+        assert!(interval <= std::time::Duration::from_secs(2070)); // 1800 * 1.15
+    }
+
+    #[test]
+    fn refresh_interval_already_expired() {
+        // Cert already expired → remaining clamped to 0, then clamped to min
+        let now_epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let interval = compute_refresh_interval(Some(now_epoch - 3600));
+        // 0/12 = 0, clamped to 300s (REFRESH_INTERVAL_MIN) ±15%
+        assert!(interval >= std::time::Duration::from_secs(255));
+        assert!(interval <= std::time::Duration::from_secs(345));
+    }
 
     #[test]
     fn backoff_calculation() {
