@@ -4,6 +4,10 @@
 /// See `trustless-provider-filesystem` for a complete example.
 pub trait Handler: Send + Sync {
     /// Handle an `initialize` request. Return all available certificates.
+    ///
+    /// This method may be called multiple times on the same provider process
+    /// to reload certificates. Implementations should return the current set
+    /// of available certificates each time.
     fn initialize(
         &self,
     ) -> impl std::future::Future<

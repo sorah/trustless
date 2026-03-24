@@ -345,8 +345,12 @@ mod executor {
 mod tests {
     use super::*;
 
+    /// Env-var-mutating tests must not run concurrently with each other.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_should_skip_zero() {
+        let _guard = ENV_LOCK.lock().unwrap();
         unsafe { std::env::set_var("TRUSTLESS", "0") };
         assert!(should_skip());
         unsafe { std::env::remove_var("TRUSTLESS") };
@@ -354,6 +358,7 @@ mod tests {
 
     #[test]
     fn test_should_skip_skip() {
+        let _guard = ENV_LOCK.lock().unwrap();
         unsafe { std::env::set_var("TRUSTLESS", "skip") };
         assert!(should_skip());
         unsafe { std::env::remove_var("TRUSTLESS") };
@@ -361,12 +366,14 @@ mod tests {
 
     #[test]
     fn test_should_skip_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
         unsafe { std::env::remove_var("TRUSTLESS") };
         assert!(!should_skip());
     }
 
     #[test]
     fn test_should_skip_other_value() {
+        let _guard = ENV_LOCK.lock().unwrap();
         unsafe { std::env::set_var("TRUSTLESS", "1") };
         assert!(!should_skip());
         unsafe { std::env::remove_var("TRUSTLESS") };

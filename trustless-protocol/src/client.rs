@@ -34,6 +34,8 @@ where
     }
 
     /// Send an `initialize` request and return the provider's certificates.
+    ///
+    /// May be called multiple times to reload certificates from a running provider.
     pub async fn initialize(
         &self,
     ) -> Result<crate::message::InitializeResult, crate::error::Error> {

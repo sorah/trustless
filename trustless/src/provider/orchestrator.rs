@@ -55,12 +55,20 @@ impl ProviderOrchestrator {
         let cancel = self.inner.cancel.child_token();
         let (command_tx, command_rx) = tokio::sync::mpsc::channel::<SupervisorCommand>(4);
 
-        let task = match spawn_init_register(name, &profile, &self.inner.registry).await {
+        let task = match spawn_init_register(
+            name,
+            &profile,
+            &self.inner.registry,
+            Some(self.clone()),
+        )
+        .await
+        {
             Ok(result) => {
                 let supervisor = Supervisor::new(
                     name.to_owned(),
                     profile.clone(),
                     self.inner.registry.clone(),
+                    Some(self.clone()),
                     cancel.clone(),
                     command_rx,
                     result,
@@ -87,6 +95,7 @@ impl ProviderOrchestrator {
                     name.to_owned(),
                     profile.clone(),
                     self.inner.registry.clone(),
+                    Some(self.clone()),
                     cancel.clone(),
                     command_rx,
                 ))
@@ -185,6 +194,15 @@ impl ProviderOrchestrator {
         Ok(())
     }
 
+    /// Request reinitialization of a provider (debounced in the supervisor).
+    /// Fire-and-forget — does nothing if the provider is not found or the channel is full.
+    pub fn request_reinit(&self, name: &str) {
+        let supervisors = self.inner.supervisors.lock().unwrap();
+        if let Some(handle) = supervisors.get(name) {
+            let _ = handle.command_tx.try_send(SupervisorCommand::ReinitIfDue);
+        }
+    }
+
     /// Shutdown all providers. Sends SIGTERM, waits up to 20s, then SIGKILL.
     pub async fn shutdown(&self) {
         tracing::info!("shutting down all providers");
@@ -213,11 +231,12 @@ pub(super) enum SupervisorCommand {
     Restart {
         reply: tokio::sync::oneshot::Sender<Result<(), crate::Error>>,
     },
+    /// Request reinitialization if debounce window has elapsed. Fire-and-forget.
+    ReinitIfDue,
 }
 
 pub(super) struct SpawnResult {
     pub(super) child: tokio::process::Child,
-    #[allow(dead_code)]
     pub(super) client: std::sync::Arc<super::process::ProviderClient>,
     #[allow(dead_code)]
     pub(super) signing_handle: SigningHandle,
@@ -242,6 +261,7 @@ pub(super) async fn spawn_init_register(
     name: &str,
     profile: &crate::config::Profile,
     registry: &ProviderRegistry,
+    orchestrator: Option<ProviderOrchestrator>,
 ) -> Result<SpawnResult, SpawnError> {
     let process = super::process::ProviderProcess::spawn(&profile.command)
         .await
@@ -305,6 +325,7 @@ pub(super) async fn spawn_init_register(
         registry.clone(),
         name.to_owned(),
         Some(stderr_lines.clone()),
+        orchestrator,
     );
     let handle = crate::signer::SigningWorker::start(
         client.clone(),

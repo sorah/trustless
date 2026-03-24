@@ -30,6 +30,14 @@ impl SigningWorker {
                         kind: crate::provider::ProviderErrorKind::SignFailure,
                         message: format!("sign failed (cert={}): {e}", req.certificate_id),
                     });
+                    if matches!(
+                        e,
+                        trustless_protocol::error::Error::Provider(
+                            trustless_protocol::message::ErrorCode::CertificateNotFound(_)
+                        )
+                    ) {
+                        sink.request_reinit();
+                    }
                 }
                 let mapped =
                     result.map_err(|e| rustls::Error::General(format!("remote sign failed: {e}")));

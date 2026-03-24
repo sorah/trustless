@@ -166,6 +166,7 @@ pub struct ProviderErrorSink {
     registry: registry::ProviderRegistry,
     provider_name: String,
     stderr_lines: Option<std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>>,
+    orchestrator: Option<ProviderOrchestrator>,
 }
 
 impl ProviderErrorSink {
@@ -173,11 +174,21 @@ impl ProviderErrorSink {
         registry: registry::ProviderRegistry,
         provider_name: String,
         stderr_lines: Option<std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>>,
+        orchestrator: Option<ProviderOrchestrator>,
     ) -> Self {
         Self {
             registry,
             provider_name,
             stderr_lines,
+            orchestrator,
+        }
+    }
+
+    /// Request the orchestrator to reinitialize this provider (debounced).
+    /// Used when a sign error indicates stale certificates.
+    pub fn request_reinit(&self) {
+        if let Some(ref orchestrator) = self.orchestrator {
+            orchestrator.request_reinit(&self.provider_name);
         }
     }
 
