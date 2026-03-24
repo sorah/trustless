@@ -384,7 +384,7 @@ fn parse_init_result(
             RemoteSigningKey::new(handle.clone(), cert_info.id.clone(), algorithm, schemes),
         );
 
-        let (issuer, serial, not_after, not_after_epoch) = parse_leaf_cert_metadata(&cert_chain[0]);
+        let meta = parse_leaf_cert_metadata(&cert_chain[0]);
 
         let certified_key =
             std::sync::Arc::new(rustls::sign::CertifiedKey::new(cert_chain, signing_key));
@@ -396,10 +396,10 @@ fn parse_init_result(
                 .iter()
                 .map(|d| d.to_ascii_lowercase())
                 .collect(),
-            issuer,
-            serial,
-            not_after,
-            not_after_epoch,
+            issuer: meta.issuer,
+            serial: meta.serial,
+            not_after: meta.not_after,
+            not_after_epoch: meta.not_after_epoch,
             certified_key,
         });
     }
@@ -417,9 +417,14 @@ fn parse_init_result(
     Ok((certificates, default_id))
 }
 
-fn parse_leaf_cert_metadata(
-    leaf_der: &rustls_pki_types::CertificateDer<'_>,
-) -> (String, String, String, Option<i64>) {
+struct LeafCertMetadata {
+    issuer: String,
+    serial: String,
+    not_after: String,
+    not_after_epoch: Option<i64>,
+}
+
+fn parse_leaf_cert_metadata(leaf_der: &rustls_pki_types::CertificateDer<'_>) -> LeafCertMetadata {
     let unknown = "(unknown)".to_owned();
     match x509_parser::parse_x509_certificate(leaf_der.as_ref()) {
         Ok((_, cert)) => {
@@ -436,9 +441,19 @@ fn parse_leaf_cert_metadata(
                 .not_after
                 .to_rfc2822()
                 .unwrap_or_else(|_| unknown.clone());
-            (issuer, serial, not_after, Some(not_after_epoch))
+            LeafCertMetadata {
+                issuer,
+                serial,
+                not_after,
+                not_after_epoch: Some(not_after_epoch),
+            }
         }
-        Err(_) => (unknown.clone(), unknown.clone(), unknown, None),
+        Err(_) => LeafCertMetadata {
+            issuer: unknown.clone(),
+            serial: unknown.clone(),
+            not_after: unknown,
+            not_after_epoch: None,
+        },
     }
 }
 
