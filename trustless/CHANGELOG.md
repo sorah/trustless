@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/sorah/trustless/compare/trustless/v0.3.3...trustless/v0.4.0) - 2026-03-29
+
+### Other
+
+- add compute_refresh_interval tests
+- return LeafCertMetadata struct from parse_leaf_cert_metadata
+- serialize should_skip tests to fix env var race
+- reinitialize providers on certificate errors and approaching expiry
+- Merge pull request #6 from sorah/reload-bug
+- fix shutdown during backoff respawn
+
 ## [0.3.3](https://github.com/sorah/trustless/compare/trustless/v0.3.2...trustless/v0.3.3) - 2026-03-22
 
 ### Other

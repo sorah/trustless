@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2](https://github.com/sorah/trustless/compare/trustless-provider-filesystem/v0.3.1...trustless-provider-filesystem/v0.3.2) - 2026-03-29
+
+### Other
+
+- updated the following local packages: trustless-protocol, trustless-protocol
+
 ## [0.3.1](https://github.com/sorah/trustless/compare/trustless-provider-filesystem/v0.3.0...trustless-provider-filesystem/v0.3.1) - 2026-03-18
 
 ### Other
