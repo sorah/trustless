@@ -81,6 +81,50 @@ When the current directory is inside a git worktree (a multi-worktree setup on a
 
 This feature only applies to `trustless run` (where the subdomain is inferred). `trustless exec` always uses the explicitly provided subdomain.
 
+## Aliases
+
+A route can have additional hostnames (aliases) that point to the same backend. Aliases share the primary route's lifecycle -- they are registered together and removed together when the command exits.
+
+### CLI flags
+
+Both `trustless run` and `trustless exec` accept:
+
+- `--alias <label>` -- adds a label-based alias (resolved like the primary subdomain)
+- `--alias-domain <fqdn>` -- adds a full-domain alias (used as-is)
+
+Both flags are repeatable:
+
+```bash
+trustless run --alias api-v2 --alias-domain legacy.dev.example.com rails server
+trustless exec myapp --alias api-v2 rails server
+```
+
+### `.trustless.json`
+
+Add an `aliases` array alongside the primary `name` or `domain`:
+
+```json
+{
+  "name": "myapp",
+  "aliases": [
+    {"name": "myapp-api"},
+    {"domain": "legacy.dev.example.com"}
+  ]
+}
+```
+
+Each entry uses the same format as the primary name: `{"name": "..."}` for a label or `{"domain": "..."}` for a full hostname. The `aliases` field is optional and defaults to an empty list.
+
+CLI flags and `.trustless.json` aliases are merged -- CLI flags are processed first.
+
+### Resolution
+
+Alias labels are resolved using the same provider, profile, and domain context as the primary route. Aliases do not participate in worktree detection -- they are always used exactly as specified.
+
+### Cleanup
+
+On exit, the sidecar removes alias routes along with the primary route. To avoid accidentally removing a route that was overridden by another process (e.g. a second `trustless exec` that took over the same hostname), removal checks that the route's backend address still matches before deleting.
+
 ## Domain resolution
 
 Once a subdomain label is determined (by either `run` or `exec`), it needs to be combined with a wildcard domain from the provider's certificate. This is where `--profile` and `--domain` come in.
