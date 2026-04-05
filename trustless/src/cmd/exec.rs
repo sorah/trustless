@@ -13,6 +13,14 @@ pub struct ExecArgs {
     #[arg(long)]
     domain: Option<String>,
 
+    /// Additional alias subdomain label (repeatable)
+    #[arg(long = "alias")]
+    alias: Vec<String>,
+
+    /// Additional alias FQDN (repeatable)
+    #[arg(long = "alias-domain")]
+    alias_domain: Vec<String>,
+
     /// Use a fixed port instead of ephemeral allocation
     #[arg(long)]
     port: Option<u16>,
@@ -31,6 +39,7 @@ use crate::domain::HostnameSpec;
 #[derive(Debug, Clone)]
 pub(crate) struct ExecParams {
     pub hostname_spec: HostnameSpec,
+    pub aliases: Vec<HostnameSpec>,
     pub profile: Option<String>,
     pub domain: Option<String>,
     pub port: Option<u16>,
@@ -40,8 +49,12 @@ pub(crate) struct ExecParams {
 
 impl From<ExecArgs> for ExecParams {
     fn from(args: ExecArgs) -> Self {
+        let mut aliases: Vec<HostnameSpec> =
+            args.alias.into_iter().map(HostnameSpec::Label).collect();
+        aliases.extend(args.alias_domain.into_iter().map(HostnameSpec::Full));
         Self {
             hostname_spec: HostnameSpec::Label(args.subdomain),
+            aliases,
             profile: args.profile,
             domain: args.domain,
             port: args.port,
@@ -59,6 +72,8 @@ enum ExecIpcMessage {
         port: u16,
         proxy_port: u16,
         domain_suffix: Option<String>,
+        #[serde(default)]
+        alias_hostnames: Vec<String>,
     },
     Error {
         message: String,
@@ -148,15 +163,17 @@ async fn run_sidecar(
 
 struct RouteGuard {
     route_table: crate::route::RouteTable,
-    hostname: String,
+    hostnames: Vec<String>,
 }
 
 impl Drop for RouteGuard {
     fn drop(&mut self) {
-        if let Err(e) = self.route_table.remove_route(&self.hostname) {
-            tracing::warn!(hostname = %self.hostname, err = ?e, "failed to remove route on cleanup");
-        } else {
-            tracing::debug!(hostname = %self.hostname, "route removed");
+        for hostname in &self.hostnames {
+            if let Err(e) = self.route_table.remove_route(hostname) {
+                tracing::warn!(hostname = %hostname, err = ?e, "failed to remove route on cleanup");
+            } else {
+                tracing::debug!(hostname = %hostname, "route removed");
+            }
         }
     }
 }
@@ -212,16 +229,29 @@ async fn do_sidecar_inner(params: &ExecParams) -> anyhow::Result<(ExecIpcMessage
     };
     route_table.add_route(&resolved.hostname, backend, name, true, false)?;
 
-    let guard = RouteGuard {
+    let mut guard = RouteGuard {
         route_table,
-        hostname: resolved.hostname.clone(),
+        hostnames: vec![resolved.hostname.clone()],
     };
+
+    // Resolve and register alias routes (same backend, no name)
+    let mut alias_hostnames = Vec::new();
+    for alias_spec in &params.aliases {
+        let alias_resolved =
+            alias_spec.resolve(&status, params.profile.as_deref(), params.domain.as_deref())?;
+        guard
+            .route_table
+            .add_route(&alias_resolved.hostname, backend, None, true, false)?;
+        alias_hostnames.push(alias_resolved.hostname.clone());
+        guard.hostnames.push(alias_resolved.hostname);
+    }
 
     let msg = ExecIpcMessage::Ready {
         hostname: resolved.hostname,
         port,
         proxy_port: status.port,
         domain_suffix: resolved.domain_suffix,
+        alias_hostnames,
     };
 
     Ok((msg, guard))
@@ -276,11 +306,15 @@ mod executor {
                 port,
                 proxy_port,
                 domain_suffix,
+                alias_hostnames,
             } => {
                 eprintln!(
                     "trustless: https://{}:{} -> localhost:{}",
                     hostname, proxy_port, port
                 );
+                for alias in &alias_hostnames {
+                    eprintln!("trustless:   alias https://{}:{}", alias, proxy_port);
+                }
                 execute(hostname, port, proxy_port, domain_suffix, params)
             }
             ExecIpcMessage::Error { message } => {
@@ -386,6 +420,7 @@ mod tests {
             port: 3000,
             proxy_port: 1443,
             domain_suffix: Some("dev.invalid".to_string()),
+            alias_hostnames: vec!["api-v2.dev.invalid".to_string()],
         };
         let json = serde_json::to_vec(&msg).unwrap();
         let decoded: ExecIpcMessage = serde_json::from_slice(&json).unwrap();
@@ -395,11 +430,13 @@ mod tests {
                 port,
                 proxy_port,
                 domain_suffix,
+                alias_hostnames,
             } => {
                 assert_eq!(hostname, "api.dev.invalid");
                 assert_eq!(port, 3000);
                 assert_eq!(proxy_port, 1443);
                 assert_eq!(domain_suffix, Some("dev.invalid".to_string()));
+                assert_eq!(alias_hostnames, vec!["api-v2.dev.invalid"]);
             }
             _ => panic!("expected Ready"),
         }
@@ -417,6 +454,21 @@ mod tests {
                 assert_eq!(message, "something went wrong");
             }
             _ => panic!("expected Error"),
+        }
+    }
+
+    #[test]
+    fn test_ipc_message_ready_without_alias_hostnames() {
+        // Backward compat: older sidecar may not include alias_hostnames
+        let json = r#"{"type":"Ready","hostname":"api.dev.invalid","port":3000,"proxy_port":1443,"domain_suffix":"dev.invalid"}"#;
+        let decoded: ExecIpcMessage = serde_json::from_str(json).unwrap();
+        match decoded {
+            ExecIpcMessage::Ready {
+                alias_hostnames, ..
+            } => {
+                assert!(alias_hostnames.is_empty());
+            }
+            _ => panic!("expected Ready"),
         }
     }
 

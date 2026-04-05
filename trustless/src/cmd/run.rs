@@ -10,6 +10,14 @@ pub struct RunArgs {
     #[arg(long)]
     domain: Option<String>,
 
+    /// Additional alias subdomain label (repeatable)
+    #[arg(long = "alias")]
+    alias: Vec<String>,
+
+    /// Additional alias FQDN (repeatable)
+    #[arg(long = "alias-domain")]
+    alias_domain: Vec<String>,
+
     /// Use a fixed port instead of ephemeral allocation
     #[arg(long)]
     port: Option<u16>,
@@ -27,7 +35,8 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
     if super::exec::should_skip() {
         return super::exec::skip_exec(&args.command);
     }
-    let hostname_spec = infer_project_name()?.with_worktree(detect_worktree_prefix());
+    let (hostname_spec, json_aliases) = infer_project_name()?;
+    let hostname_spec = hostname_spec.with_worktree(detect_worktree_prefix());
     match &hostname_spec {
         crate::domain::HostnameSpec::Label(s) => {
             eprintln!("trustless: inferred subdomain '{}'", s);
@@ -42,8 +51,26 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
             eprintln!("trustless: using hostname '{}'", h);
         }
     }
+
+    // Build alias specs: CLI flags first, then .trustless.json aliases
+    let mut aliases: Vec<crate::domain::HostnameSpec> = args
+        .alias
+        .iter()
+        .map(|s| crate::domain::HostnameSpec::Label(s.clone()))
+        .collect();
+    aliases.extend(
+        args.alias_domain
+            .iter()
+            .map(|d| crate::domain::HostnameSpec::Full(d.clone())),
+    );
+    aliases.extend(json_aliases.into_iter().map(|na| match na {
+        NameOptions::Label { name } => crate::domain::HostnameSpec::Label(name),
+        NameOptions::Domain { domain } => crate::domain::HostnameSpec::Full(domain),
+    }));
+
     let params = super::exec::ExecParams {
         hostname_spec,
+        aliases,
         profile: args.profile.clone(),
         domain: args.domain.clone(),
         port: args.port,
@@ -53,18 +80,19 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
     super::exec::run_exec(params)
 }
 
-fn infer_project_name() -> anyhow::Result<crate::domain::HostnameSpec> {
+fn infer_project_name() -> anyhow::Result<(crate::domain::HostnameSpec, Vec<NameOptions>)> {
     let cwd = std::env::current_dir()?;
 
     // 1. .trustless.json (highest priority)
     if let Some(tj) = find_trustless_json(&cwd) {
+        let aliases = tj.aliases;
         match tj.name {
             NameOptions::Domain { domain } => {
                 crate::domain::validate_hostname(&domain)?;
-                return Ok(crate::domain::HostnameSpec::Full(domain));
+                return Ok((crate::domain::HostnameSpec::Full(domain), aliases));
             }
             NameOptions::Label { name } => {
-                return Ok(crate::domain::HostnameSpec::Label(name));
+                return Ok((crate::domain::HostnameSpec::Label(name), aliases));
             }
         }
     }
@@ -73,7 +101,7 @@ fn infer_project_name() -> anyhow::Result<crate::domain::HostnameSpec> {
     if let Some(name) = find_package_json_name(&cwd)
         && let Some(sanitized) = crate::domain::sanitize_label(&name)
     {
-        return Ok(crate::domain::HostnameSpec::Label(sanitized));
+        return Ok((crate::domain::HostnameSpec::Label(sanitized), vec![]));
     }
 
     // 3. Git repo root directory name
@@ -81,14 +109,14 @@ fn infer_project_name() -> anyhow::Result<crate::domain::HostnameSpec> {
         && let Some(basename) = git_root.file_name().and_then(|n| n.to_str())
         && let Some(sanitized) = crate::domain::sanitize_label(basename)
     {
-        return Ok(crate::domain::HostnameSpec::Label(sanitized));
+        return Ok((crate::domain::HostnameSpec::Label(sanitized), vec![]));
     }
 
     // 4. Current directory basename
     if let Some(basename) = cwd.file_name().and_then(|n| n.to_str())
         && let Some(sanitized) = crate::domain::sanitize_label(basename)
     {
-        return Ok(crate::domain::HostnameSpec::Label(sanitized));
+        return Ok((crate::domain::HostnameSpec::Label(sanitized), vec![]));
     }
 
     anyhow::bail!(
@@ -126,6 +154,8 @@ fn find_in_ancestors<T>(
 struct TrustlessJson {
     #[serde(flatten)]
     name: NameOptions,
+    #[serde(default)]
+    aliases: Vec<NameOptions>,
 }
 
 #[derive(serde::Deserialize)]
@@ -406,6 +436,44 @@ mod tests {
     fn test_find_trustless_json_not_found() {
         let dir = tempfile::tempdir().unwrap();
         assert!(find_trustless_json(dir.path()).is_none());
+    }
+
+    #[test]
+    fn test_find_trustless_json_with_alias() {
+        let dir = tempfile::tempdir().unwrap();
+        let tj = serde_json::json!({
+            "name": "myapp",
+            "aliases": [
+                {"name": "myapp-api"},
+                {"domain": "custom.example.com"}
+            ]
+        });
+        std::fs::write(dir.path().join(".trustless.json"), tj.to_string()).unwrap();
+
+        let result = find_trustless_json(dir.path()).unwrap();
+        match result.name {
+            NameOptions::Label { name } => assert_eq!(name, "myapp"),
+            NameOptions::Domain { .. } => panic!("expected Label variant"),
+        }
+        assert_eq!(result.aliases.len(), 2);
+        match &result.aliases[0] {
+            NameOptions::Label { name } => assert_eq!(name, "myapp-api"),
+            NameOptions::Domain { .. } => panic!("expected Label variant for alias[0]"),
+        }
+        match &result.aliases[1] {
+            NameOptions::Domain { domain } => assert_eq!(domain, "custom.example.com"),
+            NameOptions::Label { .. } => panic!("expected Domain variant for alias[1]"),
+        }
+    }
+
+    #[test]
+    fn test_find_trustless_json_without_alias() {
+        let dir = tempfile::tempdir().unwrap();
+        let tj = serde_json::json!({ "name": "myapp" });
+        std::fs::write(dir.path().join(".trustless.json"), tj.to_string()).unwrap();
+
+        let result = find_trustless_json(dir.path()).unwrap();
+        assert!(result.aliases.is_empty());
     }
 
     #[test]
