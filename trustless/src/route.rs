@@ -234,6 +234,30 @@ impl RouteTable {
 
         Self::save_routes(&file, &routes_file)
     }
+
+    /// Remove a route only if its backend matches the expected value.
+    /// Returns `Ok(true)` if removed, `Ok(false)` if the route was absent or
+    /// pointed to a different backend (i.e. overridden by another process).
+    pub fn remove_route_if_backend(
+        &self,
+        host: &str,
+        expected_backend: std::net::SocketAddr,
+    ) -> Result<bool, RouteError> {
+        let (mut routes_file, file) = match self.lock_and_load(host, false) {
+            Ok(v) => v,
+            Err(RouteError::RouteNotFound(_)) => return Ok(false),
+            Err(e) => return Err(e),
+        };
+
+        match routes_file.routes.get(host) {
+            Some(entry) if entry.backend == expected_backend => {}
+            _ => return Ok(false),
+        }
+
+        routes_file.routes.remove(host);
+        Self::save_routes(&file, &routes_file)?;
+        Ok(true)
+    }
 }
 
 fn flock_exclusive(file: &std::fs::File) -> Result<(), std::io::Error> {
@@ -514,5 +538,56 @@ mod tests {
         let (host, entry) = table.find_by_name("api.lo.dev.invalid").unwrap().unwrap();
         assert_eq!(host, "api.lo.dev.invalid");
         assert_eq!(entry.backend, addr);
+    }
+
+    #[test]
+    fn test_remove_route_if_backend_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let table = RouteTable::new(dir.path().to_path_buf());
+
+        let addr: std::net::SocketAddr = "127.0.0.1:3000".parse().unwrap();
+        table
+            .add_route("api.lo.dev.invalid", addr, None, false, false)
+            .unwrap();
+
+        assert!(
+            table
+                .remove_route_if_backend("api.lo.dev.invalid", addr)
+                .unwrap()
+        );
+        assert_eq!(table.resolve("api.lo.dev.invalid").unwrap(), None);
+    }
+
+    #[test]
+    fn test_remove_route_if_backend_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let table = RouteTable::new(dir.path().to_path_buf());
+
+        let addr1: std::net::SocketAddr = "127.0.0.1:3000".parse().unwrap();
+        let addr2: std::net::SocketAddr = "127.0.0.1:4000".parse().unwrap();
+        table
+            .add_route("api.lo.dev.invalid", addr1, None, false, false)
+            .unwrap();
+
+        // Different backend — should not remove
+        assert!(
+            !table
+                .remove_route_if_backend("api.lo.dev.invalid", addr2)
+                .unwrap()
+        );
+        assert_eq!(table.resolve("api.lo.dev.invalid").unwrap(), Some(addr1));
+    }
+
+    #[test]
+    fn test_remove_route_if_backend_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let table = RouteTable::new(dir.path().to_path_buf());
+
+        let addr: std::net::SocketAddr = "127.0.0.1:3000".parse().unwrap();
+        assert!(
+            !table
+                .remove_route_if_backend("nonexistent.host", addr)
+                .unwrap()
+        );
     }
 }

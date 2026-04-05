@@ -163,16 +163,24 @@ async fn run_sidecar(
 
 struct RouteGuard {
     route_table: crate::route::RouteTable,
+    backend: std::net::SocketAddr,
     hostnames: Vec<String>,
 }
 
 impl Drop for RouteGuard {
     fn drop(&mut self) {
         for hostname in &self.hostnames {
-            if let Err(e) = self.route_table.remove_route(hostname) {
-                tracing::warn!(hostname = %hostname, err = ?e, "failed to remove route on cleanup");
-            } else {
-                tracing::debug!(hostname = %hostname, "route removed");
+            match self
+                .route_table
+                .remove_route_if_backend(hostname, self.backend)
+            {
+                Ok(true) => tracing::debug!(hostname = %hostname, "route removed"),
+                Ok(false) => {
+                    tracing::debug!(hostname = %hostname, "route already overridden, skipping removal")
+                }
+                Err(e) => {
+                    tracing::warn!(hostname = %hostname, err = ?e, "failed to remove route on cleanup")
+                }
             }
         }
     }
@@ -231,6 +239,7 @@ async fn do_sidecar_inner(params: &ExecParams) -> anyhow::Result<(ExecIpcMessage
 
     let mut guard = RouteGuard {
         route_table,
+        backend,
         hostnames: vec![resolved.hostname.clone()],
     };
 
