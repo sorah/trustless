@@ -3910,7 +3910,7 @@ dependencies = [
 
 [[package]]
 name = "trustless"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3980,7 +3980,7 @@ dependencies = [
 
 [[package]]
 name = "trustless-protocol"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "aes",
  "base64ct",
@@ -4021,7 +4021,7 @@ dependencies = [
 
 [[package]]
 name = "trustless-provider-filesystem"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -4037,7 +4037,7 @@ dependencies = [
 
 [[package]]
 name = "trustless-provider-lambda"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "aws-config",

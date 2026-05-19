@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2](https://github.com/sorah/trustless/compare/trustless/v0.4.1...trustless/v0.4.2) - 2026-05-19
+
+### Other
+
+- pass OwnedFd to nix::fcntl::fcntl
+- roll latest dependencies
+- Merge pull request #11 from sorah/status-sort
+- sort Routes by hostname
+
 ## [0.4.1](https://github.com/sorah/trustless/compare/trustless/v0.4.0...trustless/v0.4.1) - 2026-04-05
 
 ### Other
