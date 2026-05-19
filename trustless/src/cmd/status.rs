@@ -48,7 +48,9 @@ pub async fn run(args: &StatusArgs) -> anyhow::Result<()> {
         eprintln!();
         eprintln!("{}", "Routes".bold());
         eprintln!();
-        for (host, backend) in &status.routes {
+        let mut routes: Vec<_> = status.routes.iter().collect();
+        routes.sort_by(|a, b| a.0.cmp(b.0));
+        for (host, backend) in routes {
             eprintln!("  https://{host}:{}   →  {backend}", status.port);
         }
     }
