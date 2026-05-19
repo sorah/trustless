@@ -23,7 +23,7 @@ minijinja-embed = "2"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "server-graceful", "http1", "http2"] }
-nix = { version = "0.29", features = ["fs", "signal", "process"] }
+nix = { version = "0.31", features = ["fs", "signal", "process"] }
 cfg-if = "1"
 enum_dispatch = "0.3"
 async-stream = "0.3"
@@ -31,12 +31,12 @@ futures-core = "0.3"
 parking_lot = "0.12"
 process_path = "0.1"
 rcgen.workspace = true
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "json"] }
 rustls = { workspace = true, features = ["aws_lc_rs", "logging", "tls12"] }
 rustls-pki-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-socket2 = "0.5"
+socket2 = "0.6"
 thiserror.workspace = true
 tokio.workspace = true
 tokio-rustls = "0.26"
@@ -56,7 +56,7 @@ minijinja-embed = "2"
 
 [dev-dependencies]
 tempfile = "3"
-tokio-tungstenite = "0.26"
+tokio-tungstenite = "0.29"
 futures-util = "0.3"
 
 [[example]]

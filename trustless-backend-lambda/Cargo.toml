@@ -14,7 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 trustless-protocol = { workspace = true, features = ["provider-helpers", "encrypted-key"] }
-lambda_runtime = "1.1.0-rc1"
+lambda_runtime = "1.2"
 aws-sdk-s3 = "1"
 aws-sdk-ssm = "1"
 aws-config = { version = "1", features = ["behavior-version-latest"] }
@@ -33,4 +33,4 @@ rcgen.workspace = true
 aws-smithy-mocks = "0.2"
 aws-sdk-s3 = { version = "1", features = ["test-util"] }
 aws-sdk-ssm = { version = "1", features = ["test-util"] }
-aws-smithy-types = "1"
+aws-smithy-types = "1.4"

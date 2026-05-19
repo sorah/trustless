@@ -33,7 +33,7 @@ fn decrypt_pkcs8_encrypted(
     })?;
 
     let encrypted_info =
-        pkcs8::EncryptedPrivateKeyInfo::try_from(der_doc.as_bytes()).map_err(|e| {
+        pkcs8::EncryptedPrivateKeyInfoRef::try_from(der_doc.as_bytes()).map_err(|e| {
             ProviderHelperError::KeyDecryption(format!(
                 "failed to parse EncryptedPrivateKeyInfo: {e}"
             ))
@@ -192,16 +192,16 @@ fn evp_bytes_to_key(passphrase: &[u8], salt: &[u8], key_len: usize) -> Vec<u8> {
 
 fn decrypt_aes_cbc<C>(key: &[u8], iv: &[u8], data: &[u8]) -> Result<Vec<u8>, ProviderHelperError>
 where
-    C: cipher::BlockDecryptMut + cipher::BlockCipher + cipher::KeyInit,
+    C: cipher::BlockCipherDecrypt + cipher::KeyInit,
 {
-    use cipher::{BlockDecryptMut as _, KeyIvInit as _};
+    use cipher::{BlockModeDecrypt as _, KeyIvInit as _};
 
     let decryptor = cbc::Decryptor::<C>::new_from_slices(key, iv).map_err(|e| {
         ProviderHelperError::KeyDecryption(format!("failed to initialize cipher: {e}"))
     })?;
 
     decryptor
-        .decrypt_padded_vec_mut::<cipher::block_padding::Pkcs7>(data)
+        .decrypt_padded_vec::<cipher::block_padding::Pkcs7>(data)
         .map_err(|e| {
             ProviderHelperError::KeyDecryption(format!("failed to decrypt legacy PEM: {e}"))
         })
