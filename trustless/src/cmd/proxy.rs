@@ -273,7 +273,7 @@ async fn handle_connection(
     let service = hyper_util::service::TowerToHyperService::new(app);
 
     let conn = hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new())
-        .serve_connection(io, service)
+        .serve_connection_with_upgrades(io, service)
         .into_owned();
 
     if let Err(e) = watcher.watch(conn).await {

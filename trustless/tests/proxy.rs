@@ -523,6 +523,74 @@ async fn test_cookie_header_forwarded() {
     assert_eq!(body, "a=1; b=2", "cookie header should be forwarded as-is");
 }
 
+#[tokio::test]
+async fn test_websocket_upgrade_uses_origin_form() {
+    // Backend that records the request line and replies with a minimal 101.
+    // A raw TCP listener is used so we observe the actual wire bytes.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend_addr = listener.local_addr().unwrap();
+    let (request_line_tx, request_line_rx) = tokio::sync::oneshot::channel::<String>();
+
+    tokio::spawn(async move {
+        use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read_half, mut write_half) = stream.into_split();
+        let mut reader = BufReader::new(read_half);
+
+        let mut request_line = String::new();
+        reader.read_line(&mut request_line).await.unwrap();
+        let _ = request_line_tx.send(request_line.trim_end().to_string());
+
+        let mut line = String::new();
+        loop {
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+            if line == "\r\n" || line.is_empty() {
+                break;
+            }
+        }
+
+        let response = "HTTP/1.1 101 Switching Protocols\r\n\
+             Upgrade: websocket\r\n\
+             Connection: Upgrade\r\n\
+             Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\
+             \r\n";
+        write_half.write_all(response.as_bytes()).await.unwrap();
+        let _ = write_half.shutdown().await;
+    });
+
+    let dir = tempfile::tempdir().unwrap();
+    let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
+    route_table
+        .add_route("ws-form.lo.dev.invalid", backend_addr, None, false, false)
+        .unwrap();
+
+    let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
+
+    let url = format!("ws://{proxy_addr}/some/path?x=1");
+    let request = http::Request::builder()
+        .uri(&url)
+        .header("Host", "ws-form.lo.dev.invalid")
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+        .body(())
+        .unwrap();
+
+    let _ = tokio_tungstenite::connect_async(request).await;
+
+    let request_line = tokio::time::timeout(std::time::Duration::from_secs(5), request_line_rx)
+        .await
+        .expect("backend never received a request")
+        .expect("request-line channel dropped");
+
+    assert!(
+        request_line.starts_with("GET /some/path?x=1 HTTP/1.1"),
+        "expected origin-form request line, got: {request_line:?}"
+    );
+}
+
 async fn ws_echo_handler(ws: axum::extract::WebSocketUpgrade) -> impl axum::response::IntoResponse {
     ws.on_upgrade(|mut socket| async move {
         use axum::extract::ws::Message;
