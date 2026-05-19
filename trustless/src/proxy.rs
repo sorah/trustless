@@ -563,12 +563,6 @@ async fn handle_upgrade(
     // Build the request to the backend
     let (mut parts, _body) = req.into_parts();
 
-    let backend_url = format!(
-        "http://{}{}",
-        backend,
-        parts.uri.path_and_query().map_or("/", |pq| pq.as_str())
-    );
-
     strip_hop_by_hop_headers(&mut parts.headers, true);
     combine_h2_cookie_headers(parts.version, &mut parts.headers);
     parts.headers.remove(HOPS_HEADER);
@@ -582,8 +576,15 @@ async fn handle_upgrade(
     parts.headers.remove("x-forwarded-host");
     parts.headers.remove("forwarded");
 
-    // We need to use hyper directly for upgrade support
-    let uri: http::Uri = backend_url.parse().unwrap();
+    // Origin-form URI (path-and-query only): hyper's http1 client emits
+    // absolute-form when the URI carries a scheme+authority, which strict
+    // WebSocket upgrade handlers (e.g. Next.js's `ws`) silently close.
+    let uri: http::Uri = parts
+        .uri
+        .path_and_query()
+        .map_or("/", |pq| pq.as_str())
+        .parse()
+        .unwrap();
     let mut backend_req = http::Request::builder().method(&parts.method).uri(&uri);
 
     // Copy headers
