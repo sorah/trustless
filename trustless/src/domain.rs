@@ -32,6 +32,18 @@ impl HostnameSpec {
         }
     }
 
+    /// The companion `*.localhost` hostname for this spec, reachable over the plaintext
+    /// HTTP listener. `Full` FQDNs have no localhost form.
+    pub fn localhost_hostname(&self) -> Option<String> {
+        match self {
+            HostnameSpec::Label(s) => Some(format!("{s}.localhost")),
+            HostnameSpec::LabelWithWorktree { label, worktree } => {
+                Some(format!("{worktree}.{label}.localhost"))
+            }
+            HostnameSpec::Full(_) => None,
+        }
+    }
+
     /// Resolve this spec into a concrete hostname.
     ///
     /// For `Label`, looks up provider info and combines the label with a wildcard domain suffix.
@@ -387,6 +399,7 @@ mod tests {
         crate::control::StatusResponse {
             pid: 1,
             port: 1443,
+            cleartext_port: Some(1355),
             providers,
             routes: std::collections::HashMap::new(),
         }
@@ -541,6 +554,26 @@ mod tests {
         let resolved = spec.resolve(&status, None, None).unwrap();
         assert_eq!(resolved.hostname, "api.dev.invalid");
         assert_eq!(resolved.domain_suffix, Some("dev.invalid".to_string()));
+    }
+
+    #[test]
+    fn test_localhost_hostname() {
+        assert_eq!(
+            HostnameSpec::Label("api".to_string()).localhost_hostname(),
+            Some("api.localhost".to_string())
+        );
+        assert_eq!(
+            HostnameSpec::LabelWithWorktree {
+                label: "myapp".to_string(),
+                worktree: "auth".to_string(),
+            }
+            .localhost_hostname(),
+            Some("auth.myapp.localhost".to_string())
+        );
+        assert_eq!(
+            HostnameSpec::Full("custom.example.com".to_string()).localhost_hostname(),
+            None
+        );
     }
 
     #[test]

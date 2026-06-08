@@ -5,6 +5,7 @@ pub struct ServerState {
     registry: crate::provider::ProviderRegistry,
     route_table: crate::route::RouteTable,
     port: u16,
+    cleartext_port: Option<u16>,
     config_dir: std::path::PathBuf,
 }
 
@@ -15,6 +16,7 @@ impl ServerState {
         registry: crate::provider::ProviderRegistry,
         route_table: crate::route::RouteTable,
         port: u16,
+        cleartext_port: Option<u16>,
         config_dir: std::path::PathBuf,
     ) -> Self {
         Self {
@@ -23,6 +25,7 @@ impl ServerState {
             registry,
             route_table,
             port,
+            cleartext_port,
             config_dir,
         }
     }
@@ -264,6 +267,7 @@ fn build_status(state: &ServerState) -> super::StatusResponse {
     super::StatusResponse {
         pid: std::process::id(),
         port: state.port,
+        cleartext_port: state.cleartext_port,
         providers,
         routes,
     }
@@ -366,6 +370,7 @@ mod tests {
                 registry,
                 route_table,
                 1443,
+                Some(1355),
                 dir.path().to_path_buf(),
             ),
             rx,

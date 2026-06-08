@@ -51,6 +51,7 @@ fn start_test_server(
         registry,
         route_table,
         port,
+        None,
         state_dir,
     );
     let stub_proxy = axum::Router::new()

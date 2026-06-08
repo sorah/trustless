@@ -26,6 +26,9 @@ pub struct RunArgs {
     #[arg(long)]
     no_framework: bool,
 
+    #[command(flatten)]
+    url_mode: super::exec::UrlModeArgs,
+
     /// Command line to execute.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     command: Vec<std::ffi::OsString>,
@@ -75,6 +78,7 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
         domain: args.domain.clone(),
         port: args.port,
         no_framework: args.no_framework,
+        url_mode: args.url_mode.clone(),
         command: args.command.clone(),
     };
     super::exec::run_exec(params)

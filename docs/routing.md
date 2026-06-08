@@ -180,7 +180,9 @@ The exec'd command receives:
 | `TRUSTLESS_HOST` | Same as `HOST` | `my-app.dev.example.com` |
 | `TRUSTLESS_PORT` | Proxy listen port | `1443` |
 
-The app should listen on `127.0.0.1:$PORT`. The browser URL is `https://$HOST:$TRUSTLESS_PORT`.
+The app should listen on `127.0.0.1:$PORT`. The browser URL is `$TRUSTLESS_URL` (normally `https://$HOST:$TRUSTLESS_PORT`).
+
+In addition to the HTTPS domain, every route gets a plaintext `<name>.localhost` companion reachable at `http://<name>.localhost:1355`. When no HTTPS domain is available, or with `--prefer-cleartext-url`, `HOST`/`TRUSTLESS_PORT`/`TRUSTLESS_URL` point at that plaintext URL instead. See [Plaintext usage](plaintext.md).
 
 ## Route lifecycle
 
