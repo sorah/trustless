@@ -119,6 +119,23 @@ const MAX_PROXY_HOPS: u32 = 5;
 #[derive(Clone, Copy, Debug)]
 pub struct ClientAddr(pub std::net::SocketAddr);
 
+/// Scheme of the client-facing connection, used to set `X-Forwarded-Proto`/`Forwarded`.
+/// TLS connections are `Https`; the plaintext (cleartext) listener uses `Http`.
+#[derive(Clone, Copy, Debug)]
+pub enum RequestScheme {
+    Http,
+    Https,
+}
+
+impl RequestScheme {
+    fn as_str(self) -> &'static str {
+        match self {
+            RequestScheme::Http => "http",
+            RequestScheme::Https => "https",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ProxyState {
     pub route_table: crate::route::RouteTable,
@@ -237,6 +254,7 @@ fn accepts_html(headers: &http::HeaderMap) -> bool {
 async fn proxy_handler(
     axum::extract::State(state): axum::extract::State<std::sync::Arc<ProxyState>>,
     axum::Extension(ClientAddr(client_addr)): axum::Extension<ClientAddr>,
+    axum::Extension(scheme): axum::Extension<RequestScheme>,
     req: axum::extract::Request,
 ) -> Result<axum::response::Response, ErrorResponse> {
     let start = std::time::Instant::now();
@@ -325,11 +343,11 @@ async fn proxy_handler(
         .map_or("/".to_string(), |pq| pq.to_string());
 
     let response = if is_upgrade {
-        handle_upgrade(state, client_addr, req, backend, &host, hops)
+        handle_upgrade(state, client_addr, req, backend, &host, hops, scheme)
             .await
             .map_err(&mk_err)?
     } else {
-        handle_request(state, client_addr, req, backend, &host, hops)
+        handle_request(state, client_addr, req, backend, &host, hops, scheme)
             .await
             .map_err(&mk_err)?
     };
@@ -490,6 +508,7 @@ async fn handle_request(
     backend: std::net::SocketAddr,
     original_host: &str,
     hops: u32,
+    scheme: RequestScheme,
 ) -> Result<axum::response::Response, ProxyError> {
     let (mut parts, body) = req.into_parts();
     let path = parts.uri.path_and_query().map_or("/", |pq| pq.as_str());
@@ -503,7 +522,8 @@ async fn handle_request(
     combine_h2_cookie_headers(parts.version, &mut parts.headers);
     parts.headers.remove(HOPS_HEADER);
 
-    let forwarded = build_forwarded_headers(&parts.headers, client_addr, original_host, "https");
+    let forwarded =
+        build_forwarded_headers(&parts.headers, client_addr, original_host, scheme.as_str());
 
     // Remove headers that the proxy sets explicitly to avoid duplication
     parts.headers.remove(http::header::HOST);
@@ -559,6 +579,7 @@ async fn handle_upgrade(
     backend: std::net::SocketAddr,
     original_host: &str,
     hops: u32,
+    scheme: RequestScheme,
 ) -> Result<axum::response::Response, ProxyError> {
     // Build the request to the backend
     let (mut parts, _body) = req.into_parts();
@@ -567,7 +588,8 @@ async fn handle_upgrade(
     combine_h2_cookie_headers(parts.version, &mut parts.headers);
     parts.headers.remove(HOPS_HEADER);
 
-    let forwarded = build_forwarded_headers(&parts.headers, client_addr, original_host, "https");
+    let forwarded =
+        build_forwarded_headers(&parts.headers, client_addr, original_host, scheme.as_str());
 
     // Remove headers that the proxy sets explicitly to avoid duplication
     parts.headers.remove(http::header::HOST);
@@ -704,6 +726,14 @@ async fn handle_upgrade(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build the proxy app with the per-connection extensions the server layers in
+    /// production (`ClientAddr` + `RequestScheme`).
+    fn test_app(state: ProxyState, scheme: RequestScheme) -> axum::Router {
+        proxy_router(state)
+            .layer(axum::Extension(ClientAddr("127.0.0.1:0".parse().unwrap())))
+            .layer(axum::Extension(scheme))
+    }
 
     #[test]
     fn test_forwarded_headers() {
@@ -865,8 +895,7 @@ mod tests {
                 .build()
                 .unwrap(),
         };
-        let app =
-            proxy_router(state).layer(axum::Extension(ClientAddr("127.0.0.1:0".parse().unwrap())));
+        let app = test_app(state, RequestScheme::Https);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let proxy_addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -887,6 +916,63 @@ mod tests {
             body, "my-app.lo.dev.invalid",
             "Host header should be preserved as the original hostname, not rewritten to backend address"
         );
+    }
+
+    async fn proto_seen_by_backend(scheme: RequestScheme) -> String {
+        let backend = axum::Router::new().route(
+            "/proto",
+            axum::routing::get(|headers: http::HeaderMap| async move {
+                headers
+                    .get("x-forwarded-proto")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("missing")
+                    .to_string()
+            }),
+        );
+        let backend_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend_addr = backend_listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(backend_listener, backend).await.unwrap();
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        let route_table = crate::route::RouteTable::new(dir.path().to_path_buf());
+        route_table
+            .add_route("app.lo.dev.invalid", backend_addr, None, false, false)
+            .unwrap();
+
+        let state = ProxyState {
+            route_table,
+            registry: crate::provider::ProviderRegistry::new(),
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+        };
+        let app = test_app(state, scheme);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let resp = reqwest::Client::new()
+            .get(format!("http://{proxy_addr}/proto"))
+            .header("Host", "app.lo.dev.invalid")
+            .send()
+            .await
+            .unwrap();
+        resp.text().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_scheme_http_sets_forwarded_proto_http() {
+        assert_eq!(proto_seen_by_backend(RequestScheme::Http).await, "http");
+    }
+
+    #[tokio::test]
+    async fn test_scheme_https_sets_forwarded_proto_https() {
+        assert_eq!(proto_seen_by_backend(RequestScheme::Https).await, "https");
     }
 
     #[test]
@@ -1004,8 +1090,7 @@ mod tests {
                 .build()
                 .unwrap(),
         };
-        let app =
-            proxy_router(state).layer(axum::Extension(ClientAddr("127.0.0.1:0".parse().unwrap())));
+        let app = test_app(state, RequestScheme::Https);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let proxy_addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -1111,8 +1196,7 @@ mod tests {
                 .build()
                 .unwrap(),
         };
-        let app =
-            proxy_router(state).layer(axum::Extension(ClientAddr("127.0.0.1:0".parse().unwrap())));
+        let app = test_app(state, RequestScheme::Https);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let proxy_addr = listener.local_addr().unwrap();
         tokio::spawn(async move {

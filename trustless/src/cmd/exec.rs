@@ -29,9 +29,31 @@ pub struct ExecArgs {
     #[arg(long)]
     no_framework: bool,
 
+    #[command(flatten)]
+    url_mode: UrlModeArgs,
+
     /// Command line to execute.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     command: Vec<std::ffi::OsString>,
+}
+
+/// URL/scheme behavior flags shared by `trustless exec` and `trustless run`.
+/// The flags are mutually exclusive: `--require-https-url` already implies `--no-localhost`,
+/// and `--prefer-cleartext-url` is the opposite of both.
+#[derive(clap::Args, Debug, Clone)]
+#[group(multiple = false)]
+pub(crate) struct UrlModeArgs {
+    /// Do not also register a `<name>.localhost` route
+    #[arg(long, env = "TRUSTLESS_NO_LOCALHOST", require_equals = true, num_args = 0..=1, default_value_t = false, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new())]
+    pub no_localhost: bool,
+
+    /// Fail (instead of falling back to the cleartext URL) when no HTTPS domain is available
+    #[arg(long, env = "TRUSTLESS_REQUIRE_HTTPS_URL", require_equals = true, num_args = 0..=1, default_value_t = false, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new())]
+    pub require_https_url: bool,
+
+    /// Display and export the plaintext `http://<name>.localhost` URL even when HTTPS is available
+    #[arg(long, env = "TRUSTLESS_PREFER_CLEARTEXT_URL", require_equals = true, num_args = 0..=1, default_value_t = false, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new())]
+    pub prefer_cleartext_url: bool,
 }
 
 use crate::domain::HostnameSpec;
@@ -44,6 +66,7 @@ pub(crate) struct ExecParams {
     pub domain: Option<String>,
     pub port: Option<u16>,
     pub no_framework: bool,
+    pub url_mode: UrlModeArgs,
     pub command: Vec<std::ffi::OsString>,
 }
 
@@ -59,6 +82,7 @@ impl From<ExecArgs> for ExecParams {
             domain: args.domain,
             port: args.port,
             no_framework: args.no_framework,
+            url_mode: args.url_mode,
             command: args.command,
         }
     }
@@ -68,12 +92,17 @@ impl From<ExecArgs> for ExecParams {
 #[serde(tag = "type")]
 enum ExecIpcMessage {
     Ready {
-        hostname: String,
-        port: u16,
-        proxy_port: u16,
-        domain_suffix: Option<String>,
+        /// Local backend port the command listens on.
+        backend_port: u16,
+        /// The chosen primary URL (HTTPS, or the cleartext fallback). `None` when no
+        /// reachable URL is available. Drives both display and the `HOST`/`TRUSTLESS_*` env vars.
+        service: Option<UrlChoice>,
+        /// Additional alias URLs to display (chosen scheme).
         #[serde(default)]
-        alias_hostnames: Vec<String>,
+        alias_urls: Vec<String>,
+        /// Provider diagnostic to surface before continuing (cleartext fallback only).
+        #[serde(default)]
+        warning: Option<String>,
     },
     Error {
         message: String,
@@ -212,54 +241,158 @@ fn inform_executor(ipc_fd: std::os::fd::OwnedFd, message: &ExecIpcMessage) -> an
     Ok(())
 }
 
+/// A resolved, reachable URL for a service, in a single scheme. Carries everything the
+/// executor needs to set env vars (`HOST`, `TRUSTLESS_PORT`, `TRUSTLESS_URL`) and display
+/// the URL.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct UrlChoice {
+    host: String,
+    port: u16,
+    url: String,
+    domain_suffix: Option<String>,
+}
+
 #[tracing::instrument(name = "exec_sidecar", skip_all)]
 async fn do_sidecar_inner(params: &ExecParams) -> anyhow::Result<(ExecIpcMessage, RouteGuard)> {
     let client = crate::cmd::proxy::connect_or_start().await?;
     let status = client.status().await?;
+    let profile = params.profile.as_deref();
+    let domain = params.domain.as_deref();
 
-    let resolved = params.hostname_spec.resolve(
-        &status,
-        params.profile.as_deref(),
-        params.domain.as_deref(),
-    )?;
+    // Resolve the HTTPS hostname. When no wildcard domain is available we fall back to the
+    // plaintext `*.localhost` URL instead of failing — unless --require-https-url is set.
+    // The provider diagnostic is surfaced as a warning, but stays silent when no provider
+    // is configured at all (nothing to diagnose).
+    let (resolved, warning) = match params.hostname_spec.resolve(&status, profile, domain) {
+        Ok(r) => (Some(r), None),
+        Err(e) if params.url_mode.require_https_url => return Err(e),
+        Err(e) => {
+            let warning = (!status.providers.is_empty()).then(|| e.to_string());
+            (None, warning)
+        }
+    };
+
     let port = match params.port {
         Some(p) => p,
         None => allocate_ephemeral_port()?,
     };
-
-    let route_table = crate::route::RouteTable::new(crate::config::state_dir());
     let backend: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
     let name = match &params.hostname_spec {
         HostnameSpec::Label(s) => Some(s.as_str()),
         HostnameSpec::LabelWithWorktree { label, .. } => Some(label.as_str()),
         HostnameSpec::Full(_) => None,
     };
-    route_table.add_route(&resolved.hostname, backend, name, true, false)?;
 
     let mut guard = RouteGuard {
-        route_table,
+        route_table: crate::route::RouteTable::new(crate::config::state_dir()),
         backend,
-        hostnames: vec![resolved.hostname.clone()],
+        hostnames: Vec::new(),
     };
 
-    // Resolve and register alias routes (same backend, no name)
-    let mut alias_hostnames = Vec::new();
-    for alias_spec in &params.aliases {
-        let alias_resolved =
-            alias_spec.resolve(&status, params.profile.as_deref(), params.domain.as_deref())?;
+    // Register a route once, deduplicating by hostname. Returns whether it was newly added
+    // (so an alias or `*.localhost` companion that coincides with an already-registered name
+    // — e.g. when resolution naturally picks a `*.localhost` domain — isn't added twice).
+    let mut register = |host: &str, route_name: Option<&str>| -> anyhow::Result<bool> {
+        if guard.hostnames.iter().any(|h| h == host) {
+            return Ok(false);
+        }
         guard
             .route_table
-            .add_route(&alias_resolved.hostname, backend, None, true, false)?;
-        alias_hostnames.push(alias_resolved.hostname.clone());
-        guard.hostnames.push(alias_resolved.hostname);
+            .add_route(host, backend, route_name, true, false)?;
+        guard.hostnames.push(host.to_owned());
+        Ok(true)
+    };
+
+    // Register the HTTPS route (when a domain resolved). This may itself be a `*.localhost`
+    // name when that's what resolution picked or what the user configured.
+    if let Some(r) = &resolved {
+        register(&r.hostname, name)?;
     }
 
+    // Register the `*.localhost` companion. Always in fallback (it is the only route);
+    // otherwise unless opted out. `--require-https-url` implies `--no-localhost` (a
+    // plaintext-only companion would contradict "HTTPS or fail"); a `*.localhost` name that
+    // resolves over HTTPS is registered above and survives via dedup regardless.
+    let localhost_host = params.hostname_spec.localhost_hostname();
+    let no_localhost = params.url_mode.no_localhost || params.url_mode.require_https_url;
+    let register_localhost = !no_localhost || resolved.is_none();
+    if register_localhost && let Some(lh) = &localhost_host {
+        let lh_name = if resolved.is_some() { None } else { name };
+        register(lh, lh_name)?;
+    }
+
+    // Register alias routes (same backend, no name) and collect their hostnames per scheme.
+    let mut alias_https: Vec<String> = Vec::new();
+    let mut alias_localhost: Vec<String> = Vec::new();
+    for alias_spec in &params.aliases {
+        if let Ok(ar) = alias_spec.resolve(&status, profile, domain)
+            && register(&ar.hostname, None)?
+        {
+            alias_https.push(ar.hostname);
+        }
+        if register_localhost
+            && let Some(alh) = alias_spec.localhost_hostname()
+            && register(&alh, None)?
+        {
+            alias_localhost.push(alh);
+        }
+    }
+
+    let cleartext_port = status.cleartext_port;
+    // The localhost companion is reachable whenever its host ended up registered — either
+    // added above, or because it coincided with the resolved HTTPS name.
+    let localhost_registered = localhost_host
+        .as_deref()
+        .is_some_and(|lh| guard.hostnames.iter().any(|h| h == lh));
+
+    // Pick the single URL to display and export. HTTPS by default; the cleartext URL when
+    // HTTPS is unavailable or when --prefer-cleartext-url is set.
+    let https_choice = resolved.as_ref().map(|r| UrlChoice {
+        host: r.hostname.clone(),
+        port: status.port,
+        url: format!("https://{}:{}", r.hostname, status.port),
+        domain_suffix: r.domain_suffix.clone(),
+    });
+    let cleartext_choice = match (
+        localhost_registered.then_some(localhost_host).flatten(),
+        cleartext_port,
+    ) {
+        (Some(lh), Some(cp)) => Some(UrlChoice {
+            host: lh.clone(),
+            port: cp,
+            url: format!("http://{lh}:{cp}"),
+            domain_suffix: Some("localhost".to_owned()),
+        }),
+        _ => None,
+    };
+    let chose_cleartext = cleartext_choice.is_some()
+        && (params.url_mode.prefer_cleartext_url || https_choice.is_none());
+    let primary = if chose_cleartext {
+        cleartext_choice
+    } else {
+        https_choice
+    };
+
+    let alias_urls: Vec<String> = if chose_cleartext {
+        let cp = cleartext_port.expect("cleartext chosen implies a cleartext port");
+        alias_localhost
+            .iter()
+            .map(|h| format!("http://{h}:{cp}"))
+            .collect()
+    } else if primary.is_some() {
+        alias_https
+            .iter()
+            .map(|h| format!("https://{h}:{}", status.port))
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     let msg = ExecIpcMessage::Ready {
-        hostname: resolved.hostname,
-        port,
-        proxy_port: status.port,
-        domain_suffix: resolved.domain_suffix,
-        alias_hostnames,
+        backend_port: port,
+        service: primary,
+        alias_urls,
+        warning,
     };
 
     Ok((msg, guard))
@@ -310,20 +443,25 @@ mod executor {
 
         match msg {
             ExecIpcMessage::Ready {
-                hostname,
-                port,
-                proxy_port,
-                domain_suffix,
-                alias_hostnames,
+                backend_port,
+                service,
+                alias_urls,
+                warning,
             } => {
-                eprintln!(
-                    "trustless: https://{}:{} -> localhost:{}",
-                    hostname, proxy_port, port
-                );
-                for alias in &alias_hostnames {
-                    eprintln!("trustless:   alias https://{}:{}", alias, proxy_port);
+                if let Some(warning) = &warning {
+                    eprintln!("trustless: error: {}", warning);
                 }
-                execute(hostname, port, proxy_port, domain_suffix, params)
+                match &service {
+                    Some(s) => eprintln!("trustless: {} -> localhost:{}", s.url, backend_port),
+                    None => eprintln!(
+                        "trustless: no reachable URL available, running on localhost:{}",
+                        backend_port
+                    ),
+                }
+                for alias in &alias_urls {
+                    eprintln!("trustless:   alias {}", alias);
+                }
+                execute(backend_port, service, params)
             }
             ExecIpcMessage::Error { message } => {
                 eprintln!("trustless: error: {}", message);
@@ -332,13 +470,7 @@ mod executor {
         }
     }
 
-    fn execute(
-        hostname: String,
-        port: u16,
-        proxy_port: u16,
-        domain_suffix: Option<String>,
-        params: ExecParams,
-    ) -> anyhow::Result<()> {
+    fn execute(port: u16, service: Option<UrlChoice>, params: ExecParams) -> anyhow::Result<()> {
         use std::os::unix::process::CommandExt;
 
         let arg0 = params
@@ -350,15 +482,15 @@ mod executor {
         // The sidecar is in its own process, and no other threads exist here.
         unsafe {
             std::env::set_var("PORT", port.to_string());
-            std::env::set_var("HOST", &hostname);
-            std::env::set_var("TRUSTLESS_HOST", &hostname);
-            std::env::set_var("TRUSTLESS_PORT", proxy_port.to_string());
-            std::env::set_var(
-                "TRUSTLESS_URL",
-                format!("https://{}:{}", hostname, proxy_port),
-            );
+            if let Some(s) = &service {
+                std::env::set_var("HOST", &s.host);
+                std::env::set_var("TRUSTLESS_HOST", &s.host);
+                std::env::set_var("TRUSTLESS_PORT", s.port.to_string());
+                std::env::set_var("TRUSTLESS_URL", &s.url);
+            }
         }
 
+        let domain_suffix = service.as_ref().and_then(|s| s.domain_suffix.clone());
         let (exec_arg0, exec_args) = if !params.no_framework
             && let Some(fw) = crate::framework::detect(&params.command)
         {
@@ -424,27 +556,59 @@ mod tests {
     #[test]
     fn test_ipc_message_ready_roundtrip() {
         let msg = ExecIpcMessage::Ready {
-            hostname: "api.dev.invalid".to_string(),
-            port: 3000,
-            proxy_port: 1443,
-            domain_suffix: Some("dev.invalid".to_string()),
-            alias_hostnames: vec!["api-v2.dev.invalid".to_string()],
+            backend_port: 3000,
+            service: Some(UrlChoice {
+                host: "api.dev.invalid".to_string(),
+                port: 1443,
+                url: "https://api.dev.invalid:1443".to_string(),
+                domain_suffix: Some("dev.invalid".to_string()),
+            }),
+            alias_urls: vec!["https://api-v2.dev.invalid:1443".to_string()],
+            warning: None,
         };
         let json = serde_json::to_vec(&msg).unwrap();
         let decoded: ExecIpcMessage = serde_json::from_slice(&json).unwrap();
         match decoded {
             ExecIpcMessage::Ready {
-                hostname,
-                port,
-                proxy_port,
-                domain_suffix,
-                alias_hostnames,
+                backend_port,
+                service,
+                alias_urls,
+                warning,
             } => {
-                assert_eq!(hostname, "api.dev.invalid");
-                assert_eq!(port, 3000);
-                assert_eq!(proxy_port, 1443);
-                assert_eq!(domain_suffix, Some("dev.invalid".to_string()));
-                assert_eq!(alias_hostnames, vec!["api-v2.dev.invalid"]);
+                assert_eq!(backend_port, 3000);
+                let service = service.unwrap();
+                assert_eq!(service.host, "api.dev.invalid");
+                assert_eq!(service.port, 1443);
+                assert_eq!(service.url, "https://api.dev.invalid:1443");
+                assert_eq!(service.domain_suffix, Some("dev.invalid".to_string()));
+                assert_eq!(alias_urls, vec!["https://api-v2.dev.invalid:1443"]);
+                assert_eq!(warning, None);
+            }
+            _ => panic!("expected Ready"),
+        }
+    }
+
+    #[test]
+    fn test_ipc_message_ready_cleartext_fallback() {
+        let msg = ExecIpcMessage::Ready {
+            backend_port: 3000,
+            service: Some(UrlChoice {
+                host: "hello.localhost".to_string(),
+                port: 1355,
+                url: "http://hello.localhost:1355".to_string(),
+                domain_suffix: Some("localhost".to_string()),
+            }),
+            alias_urls: vec![],
+            warning: Some("no wildcard domains".to_string()),
+        };
+        let json = serde_json::to_vec(&msg).unwrap();
+        let decoded: ExecIpcMessage = serde_json::from_slice(&json).unwrap();
+        match decoded {
+            ExecIpcMessage::Ready {
+                service, warning, ..
+            } => {
+                assert_eq!(service.unwrap().url, "http://hello.localhost:1355");
+                assert_eq!(warning, Some("no wildcard domains".to_string()));
             }
             _ => panic!("expected Ready"),
         }
@@ -466,15 +630,18 @@ mod tests {
     }
 
     #[test]
-    fn test_ipc_message_ready_without_alias_hostnames() {
-        // Backward compat: older sidecar may not include alias_hostnames
-        let json = r#"{"type":"Ready","hostname":"api.dev.invalid","port":3000,"proxy_port":1443,"domain_suffix":"dev.invalid"}"#;
+    fn test_ipc_message_ready_optional_fields_default() {
+        // alias_urls and warning default when omitted.
+        let json = r#"{"type":"Ready","backend_port":3000,"service":null}"#;
         let decoded: ExecIpcMessage = serde_json::from_str(json).unwrap();
         match decoded {
             ExecIpcMessage::Ready {
-                alias_hostnames, ..
+                alias_urls,
+                warning,
+                ..
             } => {
-                assert!(alias_hostnames.is_empty());
+                assert!(alias_urls.is_empty());
+                assert!(warning.is_none());
             }
             _ => panic!("expected Ready"),
         }

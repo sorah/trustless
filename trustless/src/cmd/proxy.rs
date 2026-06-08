@@ -29,6 +29,14 @@ pub struct ProxyStartArgs {
     /// Enable TLS 1.2 (default: TLS 1.3 only)
     #[arg(long, default_value_t = false)]
     tls12: bool,
+
+    /// Disable the plaintext HTTP (cleartext) listener
+    #[arg(long, env = "TRUSTLESS_NO_CLEARTEXT", require_equals = true, num_args = 0..=1, default_value_t = false, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new())]
+    no_cleartext: bool,
+
+    /// Plaintext HTTP listener port (Portless-compatible, default 1355)
+    #[arg(long, env = "TRUSTLESS_CLEARTEXT_PORT")]
+    cleartext_port: Option<u16>,
 }
 
 #[derive(clap::Args)]
@@ -61,6 +69,14 @@ async fn run_start_async(args: &ProxyStartArgs) -> anyhow::Result<()> {
     let config = crate::config::Config::load()?;
     let port = args.port.unwrap_or(config.port);
     let port = if port == 0 { 1443 } else { port };
+
+    // Cleartext (plaintext HTTP) listener config. Opt-out via flag/env (clap-backed) or
+    // config; port overridable via flag/env or config, defaulting to 1355 (Portless).
+    let cleartext_disabled = args.no_cleartext || config.no_cleartext;
+    let cleartext_port = args
+        .cleartext_port
+        .or((config.cleartext_port != 0).then_some(config.cleartext_port))
+        .unwrap_or(1355);
 
     // Check for existing proxy
     check_existing_proxy(args.force).await?;
@@ -96,10 +112,32 @@ async fn run_start_async(args: &ProxyStartArgs) -> anyhow::Result<()> {
         alpn_protocols: vec![b"h2".to_vec(), b"http/1.1".to_vec()],
     };
 
-    // Bind TCP listener
+    // Bind TLS TCP listener
     let listener = bind_listener(port).await?;
     let local_addr = listener.local_addr()?;
     tracing::info!(port = local_addr.port(), "Proxy listening");
+
+    // Bind the plaintext HTTP listener. Best-effort: a bind failure (e.g. Portless still
+    // holding 1355) is non-fatal — we continue HTTPS-only.
+    let cleartext_listener = if cleartext_disabled {
+        None
+    } else {
+        match bind_listener(cleartext_port).await {
+            Ok(l) => {
+                tracing::info!(port = cleartext_port, "Cleartext HTTP listening");
+                Some(l)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    port = cleartext_port,
+                    error = %e,
+                    "Could not bind cleartext HTTP port, continuing HTTPS-only"
+                );
+                None
+            }
+        }
+    };
+    let active_cleartext_port = cleartext_listener.as_ref().map(|_| cleartext_port);
 
     // Write proxy state
     let state = crate::control::ProxyState {
@@ -132,12 +170,16 @@ async fn run_start_async(args: &ProxyStartArgs) -> anyhow::Result<()> {
         registry.clone(),
         route_table,
         local_addr.port(),
+        active_cleartext_port,
         config.config_dir().to_path_buf(),
     );
+    // The cleartext listener serves proxy traffic only (no control API): control hosts
+    // already get a 503 from the proxy handler, so plaintext access can't reach /stop etc.
+    let cleartext = cleartext_listener.map(|l| (l, proxy_app.clone()));
     let app = crate::control::server::dispatch_router(server_state, proxy_app);
 
     // Serve
-    let result = serve(listener, tls_params, app, shutdown_rx).await;
+    let result = serve(listener, tls_params, app, cleartext, shutdown_rx).await;
 
     // Shutdown providers
     orchestrator.shutdown().await;
@@ -173,6 +215,7 @@ async fn serve(
     listener: tokio::net::TcpListener,
     tls_params: TlsParams,
     app: axum::Router,
+    cleartext: Option<(tokio::net::TcpListener, axum::Router)>,
     shutdown_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<()> {
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -208,9 +251,32 @@ async fn serve(
         }
     };
 
+    let cleartext_accept_loop = async {
+        match cleartext {
+            Some((cleartext_listener, cleartext_app)) => loop {
+                let (stream, addr) = match cleartext_listener.accept().await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to accept cleartext connection");
+                        continue;
+                    }
+                };
+                tokio::spawn(handle_cleartext_connection(
+                    stream,
+                    addr,
+                    cleartext_app.clone(),
+                    graceful.watcher(),
+                ));
+            },
+            // No cleartext listener — park forever so the select! arm never fires.
+            None => std::future::pending::<()>().await,
+        }
+    };
+
     tokio::select! {
         _ = shutdown => {}
         _ = accept_loop => unreachable!(),
+        _ = cleartext_accept_loop => unreachable!(),
     }
 
     // Drain with timeout
@@ -268,8 +334,48 @@ async fn handle_connection(
         }
     };
 
-    let io = hyper_util::rt::TokioIo::new(tls_stream);
-    let app = app.layer(axum::Extension(crate::proxy::ClientAddr(addr)));
+    serve_connection(
+        tls_stream,
+        addr,
+        app,
+        crate::proxy::RequestScheme::Https,
+        watcher,
+    )
+    .await;
+}
+
+/// Serve a plaintext HTTP connection (no TLS) over the cleartext listener.
+async fn handle_cleartext_connection(
+    stream: tokio::net::TcpStream,
+    addr: std::net::SocketAddr,
+    app: axum::Router,
+    watcher: hyper_util::server::graceful::Watcher,
+) {
+    serve_connection(
+        stream,
+        addr,
+        app,
+        crate::proxy::RequestScheme::Http,
+        watcher,
+    )
+    .await;
+}
+
+/// Serve an established (TLS-terminated or plaintext) connection through the axum app,
+/// tagging it with the client address and scheme for forwarded-header construction.
+async fn serve_connection<I>(
+    stream: I,
+    addr: std::net::SocketAddr,
+    app: axum::Router,
+    scheme: crate::proxy::RequestScheme,
+    watcher: hyper_util::server::graceful::Watcher,
+) where
+    I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let io = hyper_util::rt::TokioIo::new(stream);
+    let app = app
+        .layer(axum::Extension(crate::proxy::ClientAddr(addr)))
+        .layer(axum::Extension(scheme));
     let service = hyper_util::service::TowerToHyperService::new(app);
 
     let conn = hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new())

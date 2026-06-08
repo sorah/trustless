@@ -29,6 +29,9 @@ pub struct ReloadResponse {
 pub struct StatusResponse {
     pub pid: u32,
     pub port: u16,
+    /// Plaintext HTTP listener port, if the cleartext listener is active.
+    #[serde(default)]
+    pub cleartext_port: Option<u16>,
     pub providers: Vec<crate::provider::ProviderStatusInfo>,
     pub routes: std::collections::HashMap<String, String>,
 }

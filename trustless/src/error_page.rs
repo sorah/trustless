@@ -171,6 +171,7 @@ mod tests {
         let status = crate::control::StatusResponse {
             pid: 12345,
             port: 1443,
+            cleartext_port: None,
             providers: vec![],
             routes: std::collections::HashMap::new(),
         };
@@ -189,6 +190,7 @@ mod tests {
         let status = crate::control::StatusResponse {
             pid: 1,
             port: 1443,
+            cleartext_port: None,
             providers: vec![],
             routes,
         };
@@ -203,6 +205,7 @@ mod tests {
         let status = crate::control::StatusResponse {
             pid: 1,
             port: 1443,
+            cleartext_port: None,
             providers: vec![crate::provider::ProviderStatusInfo {
                 name: "test-provider".to_string(),
                 state: crate::provider::ProviderState::Running,

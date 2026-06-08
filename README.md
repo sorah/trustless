@@ -9,6 +9,8 @@ trustless run rails server
 
 Trustless infers a subdomain from your project (directory name, package.json, or `.trustless.json`), allocates an ephemeral port, and starts your app behind a local HTTPS proxy -- all with a single command.
 
+Don't need HTTPS? Trustless also serves every app over plain HTTP at `http://<name>.localhost:1355` -- no certificates, no key provider, no trust store changes. This is what [Portless](https://github.com/vercel-labs/portless) used to do before it switched to HTTPS on port 443, which requires trusting a local CA. See [Plaintext usage](#plaintext-usage-httplocalhost1355).
+
 ## Why
 
 Tools like [Portless](https://github.com/vercel-labs/portless) solve the port-number problem by giving each dev server a stable `.localhost` URL. But `.localhost` is not a registrable domain, so:
@@ -61,6 +63,20 @@ cd my-frontend && trustless run next dev
 ```
 
 The proxy auto-starts on first use. Start it explicitly with `trustless proxy start` if you prefer.
+
+## Plaintext usage (http://localhost:1355)
+
+Not every app needs HTTPS. Trustless always runs a plaintext HTTP listener on port **1355** and routes `*.localhost` hostnames to your apps -- with **zero trust**: no certificates, no key provider, no trust store changes. This is the mode Portless originally offered before it moved to HTTPS-on-:443 (which alters your local trust store); `*.localhost` is still treated as a secure context by modern browsers, so service workers and friends keep working.
+
+```
+trustless run rails server
+# -> https://my-app.dev.example.com:1443   (when a key provider is configured)
+#    http://my-app.localhost:1355           (always)
+```
+
+Every `run`/`exec` registers a `<name>.localhost` route alongside the HTTPS domain, so the plaintext URL always works -- and when no HTTPS domain is available (no provider, or it's restarting), trustless prints the plaintext URL instead of failing. Use `--prefer-cleartext-url` to make it the primary URL, or `--require-https-url` to keep the strict HTTPS-only behavior.
+
+See [Plaintext usage](docs/plaintext.md) for fallback behavior, the full set of flags/env vars, and how to disable or move the listener.
 
 ## Security Notice
 
@@ -166,7 +182,7 @@ When using `trustless exec` or `trustless run`, the following environment variab
 
 - **`PORT`** — the ephemeral port your app should listen on
 - **`HOST`** — the hostname to bind to (loopback)
-- **`TRUSTLESS_URL`** — the full HTTPS URL for the service (e.g. `https://my-app.dev.example.com:1443`)
+- **`TRUSTLESS_URL`** — the full URL for the service (e.g. `https://my-app.dev.example.com:1443`, or the plaintext `http://my-app.localhost:1355` URL in [plaintext mode](docs/plaintext.md))
 
 Set `TRUSTLESS=0` or `TRUSTLESS=skip` to bypass the proxy entirely and run the command without routing through trustless.
 

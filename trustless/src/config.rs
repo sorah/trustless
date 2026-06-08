@@ -2,10 +2,22 @@ fn default_port() -> u16 {
     1443
 }
 
+fn default_cleartext_port() -> u16 {
+    1355
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct Config {
     #[serde(default = "default_port")]
     pub port: u16,
+
+    /// Plaintext HTTP listener port (Portless-compatible default 1355). `0` means unset.
+    #[serde(default = "default_cleartext_port")]
+    pub cleartext_port: u16,
+
+    /// Disable the plaintext HTTP listener entirely.
+    #[serde(default)]
+    pub no_cleartext: bool,
 
     #[serde(default)]
     pub tls12: bool,
@@ -18,6 +30,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             port: 0,
+            cleartext_port: 0,
+            no_cleartext: false,
             tls12: false,
             config_dir: std::path::PathBuf::new(),
         }
@@ -267,6 +281,28 @@ mod tests {
         std::fs::write(dir.path().join("config.json"), r#"{"port": 8443}"#).unwrap();
         let config = Config::load_from(dir.path().to_path_buf()).unwrap();
         assert_eq!(config.port, 8443);
+    }
+
+    #[test]
+    fn test_config_cleartext_port_default() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.json"), "{}").unwrap();
+        let config = Config::load_from(dir.path().to_path_buf()).unwrap();
+        assert_eq!(config.cleartext_port, 1355);
+        assert!(!config.no_cleartext);
+    }
+
+    #[test]
+    fn test_config_cleartext_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config.json"),
+            r#"{"cleartext_port": 13550, "no_cleartext": true}"#,
+        )
+        .unwrap();
+        let config = Config::load_from(dir.path().to_path_buf()).unwrap();
+        assert_eq!(config.cleartext_port, 13550);
+        assert!(config.no_cleartext);
     }
 
     #[test]
