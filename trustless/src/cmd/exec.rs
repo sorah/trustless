@@ -44,15 +44,15 @@ pub struct ExecArgs {
 #[group(multiple = false)]
 pub(crate) struct UrlModeArgs {
     /// Do not also register a `<name>.localhost` route
-    #[arg(long, env = "TRUSTLESS_NO_LOCALHOST", require_equals = true, num_args = 0..=1, default_value_t = false, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new())]
+    #[arg(long, env = "TRUSTLESS_NO_LOCALHOST", action = clap::ArgAction::SetTrue)]
     pub no_localhost: bool,
 
     /// Fail (instead of falling back to the cleartext URL) when no HTTPS domain is available
-    #[arg(long, env = "TRUSTLESS_REQUIRE_HTTPS_URL", require_equals = true, num_args = 0..=1, default_value_t = false, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new())]
+    #[arg(long, env = "TRUSTLESS_REQUIRE_HTTPS_URL", action = clap::ArgAction::SetTrue)]
     pub require_https_url: bool,
 
     /// Display and export the plaintext `http://<name>.localhost` URL even when HTTPS is available
-    #[arg(long, env = "TRUSTLESS_PREFER_CLEARTEXT_URL", require_equals = true, num_args = 0..=1, default_value_t = false, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new())]
+    #[arg(long, env = "TRUSTLESS_PREFER_CLEARTEXT_URL", action = clap::ArgAction::SetTrue)]
     pub prefer_cleartext_url: bool,
 }
 
