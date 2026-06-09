@@ -23,12 +23,10 @@ fn main() -> anyhow::Result<()> {
     tracing::info!(state_dir = %state_dir.display(), port = port, "starting proxy");
 
     let route_table = trustless::route::RouteTable::new(state_dir);
-    let client = reqwest::Client::new();
-    let state = trustless::proxy::ProxyState {
+    let state = trustless::proxy::ProxyState::new(
         route_table,
-        registry: trustless::provider::ProviderRegistry::new(),
-        client,
-    };
+        trustless::provider::ProviderRegistry::new(),
+    );
     let app = trustless::proxy::proxy_router(state);
 
     let rt = tokio::runtime::Runtime::new()?;

@@ -31,7 +31,7 @@ futures-core = "0.3"
 parking_lot = "0.12"
 process_path = "0.1"
 rcgen.workspace = true
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "json"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "json", "http2"] }
 rustls = { workspace = true, features = ["aws_lc_rs", "logging", "tls12"] }
 rustls-pki-types.workspace = true
 serde.workspace = true

@@ -261,6 +261,7 @@ mod tests {
             crate::route::RouteEntry {
                 backend: "127.0.0.1:3000".parse().unwrap(),
                 name: None,
+                protocol: crate::route::BackendProtocol::Http,
             },
         );
         let html = render_404_page("unknown.lo.dev", &routes, false);
@@ -317,6 +318,7 @@ mod tests {
             crate::route::RouteEntry {
                 backend: "127.0.0.1:3000".parse().unwrap(),
                 name: None,
+                protocol: crate::route::BackendProtocol::Http,
             },
         );
         let text = render_404_text("unknown.lo.dev", &routes, false);

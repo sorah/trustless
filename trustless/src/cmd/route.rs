@@ -12,6 +12,9 @@ pub struct AddArgs {
     host: String,
     /// Backend socket address (e.g. 127.0.0.1:3000)
     backend: std::net::SocketAddr,
+    /// Backend speaks HTTPS (and may use HTTP/2); forward over TLS
+    #[clap(long)]
+    tls: bool,
     /// Overwrite existing route
     #[clap(long)]
     force: bool,
@@ -36,6 +39,7 @@ pub fn run(cmd: &RouteCommand) -> anyhow::Result<()> {
                 &args.host,
                 args.backend,
                 None,
+                args.tls,
                 args.force,
                 args.allow_non_localhost,
             )?;

@@ -25,6 +25,10 @@ pub struct ExecArgs {
     #[arg(long)]
     port: Option<u16>,
 
+    /// The command's backend speaks HTTPS (and may use HTTP/2); forward over TLS
+    #[arg(long)]
+    tls: bool,
+
     /// Disable framework-specific flag injection (e.g. --port, --host for Vite/Astro)
     #[arg(long)]
     no_framework: bool,
@@ -65,6 +69,7 @@ pub(crate) struct ExecParams {
     pub profile: Option<String>,
     pub domain: Option<String>,
     pub port: Option<u16>,
+    pub tls: bool,
     pub no_framework: bool,
     pub url_mode: UrlModeArgs,
     pub command: Vec<std::ffi::OsString>,
@@ -81,6 +86,7 @@ impl From<ExecArgs> for ExecParams {
             profile: args.profile,
             domain: args.domain,
             port: args.port,
+            tls: args.tls,
             no_framework: args.no_framework,
             url_mode: args.url_mode,
             command: args.command,
@@ -292,13 +298,14 @@ async fn do_sidecar_inner(params: &ExecParams) -> anyhow::Result<(ExecIpcMessage
     // Register a route once, deduplicating by hostname. Returns whether it was newly added
     // (so an alias or `*.localhost` companion that coincides with an already-registered name
     // — e.g. when resolution naturally picks a `*.localhost` domain — isn't added twice).
+    let tls = params.tls;
     let mut register = |host: &str, route_name: Option<&str>| -> anyhow::Result<bool> {
         if guard.hostnames.iter().any(|h| h == host) {
             return Ok(false);
         }
         guard
             .route_table
-            .add_route(host, backend, route_name, true, false)?;
+            .add_route(host, backend, route_name, tls, true, false)?;
         guard.hostnames.push(host.to_owned());
         Ok(true)
     };

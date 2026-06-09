@@ -16,11 +16,41 @@ pub enum RouteError {
     NonLoopbackBackend(std::net::SocketAddr),
 }
 
+/// Protocol the proxy uses to reach a backend. `Https` means the backend speaks TLS (and may
+/// use HTTP/2, negotiated via ALPN); `Http` is plaintext.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BackendProtocol {
+    #[default]
+    Http,
+    Https,
+}
+
+impl BackendProtocol {
+    /// URL scheme string for building backend request URLs.
+    pub fn scheme(self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Https => "https",
+        }
+    }
+
+    pub fn is_tls(self) -> bool {
+        matches!(self, Self::Https)
+    }
+
+    fn is_http(&self) -> bool {
+        matches!(self, Self::Http)
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct RouteEntry {
     pub backend: std::net::SocketAddr,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub name: Option<String>,
+    #[serde(skip_serializing_if = "BackendProtocol::is_http", default)]
+    pub protocol: BackendProtocol,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
@@ -94,6 +124,10 @@ impl RouteTable {
     }
 
     pub fn resolve(&self, host: &str) -> Result<Option<std::net::SocketAddr>, RouteError> {
+        Ok(self.resolve_entry(host)?.map(|e| e.backend))
+    }
+
+    pub fn resolve_entry(&self, host: &str) -> Result<Option<RouteEntry>, RouteError> {
         let host = strip_port(host);
         let mut inner = self.inner.lock();
         let path = Self::routes_path(&inner.state_dir);
@@ -116,7 +150,7 @@ impl RouteTable {
             tracing::debug!("route table reloaded from disk");
         }
 
-        Ok(inner.cached_routes.get(host).map(|e| e.backend))
+        Ok(inner.cached_routes.get(host).cloned())
     }
 
     /// Open the routes file with an exclusive advisory lock and return the parsed contents
@@ -177,6 +211,7 @@ impl RouteTable {
         host: &str,
         backend: std::net::SocketAddr,
         name: Option<&str>,
+        tls: bool,
         force: bool,
         allow_non_localhost: bool,
     ) -> Result<(), RouteError> {
@@ -195,6 +230,11 @@ impl RouteTable {
             RouteEntry {
                 backend,
                 name: name.map(|s| s.to_string()),
+                protocol: if tls {
+                    BackendProtocol::Https
+                } else {
+                    BackendProtocol::Http
+                },
             },
         );
         Self::save_routes(&file, &routes_file)
@@ -275,7 +315,7 @@ mod tests {
 
         let addr: std::net::SocketAddr = "127.0.0.1:3000".parse().unwrap();
         table
-            .add_route("api.lo.dev.invalid", addr, Some("api"), false, false)
+            .add_route("api.lo.dev.invalid", addr, Some("api"), false, false, false)
             .unwrap();
 
         let resolved = table.resolve("api.lo.dev.invalid").unwrap();
@@ -287,6 +327,41 @@ mod tests {
         let entry = file.routes.get("api.lo.dev.invalid").unwrap();
         assert_eq!(entry.backend, addr);
         assert_eq!(entry.name.as_deref(), Some("api"));
+        assert_eq!(entry.protocol, BackendProtocol::Http);
+    }
+
+    #[test]
+    fn test_tls_flag_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let table = RouteTable::new(dir.path().to_path_buf());
+
+        let addr: std::net::SocketAddr = "127.0.0.1:3000".parse().unwrap();
+        table
+            .add_route("api.lo.dev.invalid", addr, None, true, false, false)
+            .unwrap();
+
+        let entry = table.resolve_entry("api.lo.dev.invalid").unwrap().unwrap();
+        assert_eq!(entry.backend, addr);
+        assert_eq!(entry.protocol, BackendProtocol::Https);
+    }
+
+    #[test]
+    fn test_http_scheme_omitted_from_serialization() {
+        let dir = tempfile::tempdir().unwrap();
+        let table = RouteTable::new(dir.path().to_path_buf());
+
+        let addr: std::net::SocketAddr = "127.0.0.1:3000".parse().unwrap();
+        table
+            .add_route("api.lo.dev.invalid", addr, None, false, false, false)
+            .unwrap();
+
+        // The default `http` scheme must not bloat the on-disk file.
+        let data = std::fs::read_to_string(dir.path().join("routes.json")).unwrap();
+        assert!(!data.contains("protocol"));
+
+        // An absent scheme deserializes back to the default.
+        let entry = table.resolve_entry("api.lo.dev.invalid").unwrap().unwrap();
+        assert_eq!(entry.protocol, BackendProtocol::Http);
     }
 
     #[test]
@@ -296,11 +371,11 @@ mod tests {
 
         let addr: std::net::SocketAddr = "127.0.0.1:3000".parse().unwrap();
         table
-            .add_route("api.lo.dev.invalid", addr, None, false, false)
+            .add_route("api.lo.dev.invalid", addr, None, false, false, false)
             .unwrap();
 
         let err = table
-            .add_route("api.lo.dev.invalid", addr, None, false, false)
+            .add_route("api.lo.dev.invalid", addr, None, false, false, false)
             .unwrap_err();
         assert!(matches!(err, RouteError::RouteExists(_)));
     }
@@ -313,10 +388,10 @@ mod tests {
         let addr1: std::net::SocketAddr = "127.0.0.1:3000".parse().unwrap();
         let addr2: std::net::SocketAddr = "127.0.0.1:4000".parse().unwrap();
         table
-            .add_route("api.lo.dev.invalid", addr1, None, false, false)
+            .add_route("api.lo.dev.invalid", addr1, None, false, false, false)
             .unwrap();
         table
-            .add_route("api.lo.dev.invalid", addr2, None, true, false)
+            .add_route("api.lo.dev.invalid", addr2, None, false, true, false)
             .unwrap();
 
         let resolved = table.resolve("api.lo.dev.invalid").unwrap();
@@ -339,7 +414,7 @@ mod tests {
 
         let addr: std::net::SocketAddr = "127.0.0.1:3000".parse().unwrap();
         table
-            .add_route("api.lo.dev.invalid", addr, None, false, false)
+            .add_route("api.lo.dev.invalid", addr, None, false, false, false)
             .unwrap();
 
         let resolved = table.resolve("api.lo.dev.invalid:8080").unwrap();
@@ -362,7 +437,7 @@ mod tests {
 
         let addr: std::net::SocketAddr = "127.0.0.1:3000".parse().unwrap();
         let err = table
-            .add_route("trustless", addr, None, false, false)
+            .add_route("trustless", addr, None, false, false, false)
             .unwrap_err();
         assert!(matches!(err, RouteError::ReservedHostname(_)));
     }
@@ -374,12 +449,12 @@ mod tests {
 
         let addr: std::net::SocketAddr = "127.0.0.1:3000".parse().unwrap();
         let err = table
-            .add_route("Trustless", addr, None, false, false)
+            .add_route("Trustless", addr, None, false, false, false)
             .unwrap_err();
         assert!(matches!(err, RouteError::ReservedHostname(_)));
 
         let err = table
-            .add_route("TRUSTLESS", addr, None, false, false)
+            .add_route("TRUSTLESS", addr, None, false, false, false)
             .unwrap_err();
         assert!(matches!(err, RouteError::ReservedHostname(_)));
     }
@@ -391,13 +466,13 @@ mod tests {
 
         let addr: std::net::SocketAddr = "192.168.1.1:3000".parse().unwrap();
         let err = table
-            .add_route("app.lo.dev.invalid", addr, None, false, false)
+            .add_route("app.lo.dev.invalid", addr, None, false, false, false)
             .unwrap_err();
         assert!(matches!(err, RouteError::NonLoopbackBackend(_)));
 
         // With --allow-non-localhost it should succeed
         table
-            .add_route("app.lo.dev.invalid", addr, None, false, true)
+            .add_route("app.lo.dev.invalid", addr, None, false, false, true)
             .unwrap();
     }
 
@@ -408,17 +483,21 @@ mod tests {
         let addr: std::net::SocketAddr = "127.0.0.1:3000".parse().unwrap();
 
         // Empty hostname
-        assert!(table.add_route("", addr, None, false, false).is_err());
+        assert!(
+            table
+                .add_route("", addr, None, false, false, false)
+                .is_err()
+        );
         // Spaces
         assert!(
             table
-                .add_route("host name", addr, None, false, false)
+                .add_route("host name", addr, None, false, false, false)
                 .is_err()
         );
         // Leading hyphen
         assert!(
             table
-                .add_route("-host.example", addr, None, false, false)
+                .add_route("-host.example", addr, None, false, false, false)
                 .is_err()
         );
     }
@@ -430,7 +509,7 @@ mod tests {
 
         let addr1: std::net::SocketAddr = "127.0.0.1:3000".parse().unwrap();
         table
-            .add_route("api.lo.dev.invalid", addr1, None, false, false)
+            .add_route("api.lo.dev.invalid", addr1, None, false, false, false)
             .unwrap();
 
         // First resolve caches the file
@@ -445,6 +524,7 @@ mod tests {
                 RouteEntry {
                     backend: addr2,
                     name: None,
+                    protocol: BackendProtocol::Http,
                 },
             )]),
         };
@@ -476,7 +556,14 @@ mod tests {
         for i in 0..10 {
             let addr: std::net::SocketAddr = format!("127.0.0.1:{}", 3000 + i).parse().unwrap();
             table
-                .add_route(&format!("host{i}.example.com"), addr, None, false, false)
+                .add_route(
+                    &format!("host{i}.example.com"),
+                    addr,
+                    None,
+                    false,
+                    false,
+                    false,
+                )
                 .unwrap();
         }
 
@@ -511,7 +598,7 @@ mod tests {
 
         let addr: std::net::SocketAddr = "127.0.0.1:3000".parse().unwrap();
         table
-            .add_route("api.lo.dev.invalid", addr, Some("api"), false, false)
+            .add_route("api.lo.dev.invalid", addr, Some("api"), false, false, false)
             .unwrap();
 
         // Find by name
@@ -531,7 +618,7 @@ mod tests {
 
         let addr: std::net::SocketAddr = "127.0.0.1:3000".parse().unwrap();
         table
-            .add_route("api.lo.dev.invalid", addr, None, false, false)
+            .add_route("api.lo.dev.invalid", addr, None, false, false, false)
             .unwrap();
 
         // No name field set, but exact hostname match works
@@ -547,7 +634,7 @@ mod tests {
 
         let addr: std::net::SocketAddr = "127.0.0.1:3000".parse().unwrap();
         table
-            .add_route("api.lo.dev.invalid", addr, None, false, false)
+            .add_route("api.lo.dev.invalid", addr, None, false, false, false)
             .unwrap();
 
         assert!(
@@ -566,7 +653,7 @@ mod tests {
         let addr1: std::net::SocketAddr = "127.0.0.1:3000".parse().unwrap();
         let addr2: std::net::SocketAddr = "127.0.0.1:4000".parse().unwrap();
         table
-            .add_route("api.lo.dev.invalid", addr1, None, false, false)
+            .add_route("api.lo.dev.invalid", addr1, None, false, false, false)
             .unwrap();
 
         // Different backend — should not remove
