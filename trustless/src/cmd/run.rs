@@ -22,6 +22,10 @@ pub struct RunArgs {
     #[arg(long)]
     port: Option<u16>,
 
+    /// The command's backend speaks HTTPS (and may use HTTP/2); forward over TLS
+    #[arg(long)]
+    tls: bool,
+
     /// Disable framework-specific flag injection (e.g. --port, --host for Vite/Astro)
     #[arg(long)]
     no_framework: bool,
@@ -77,6 +81,7 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
         profile: args.profile.clone(),
         domain: args.domain.clone(),
         port: args.port,
+        tls: args.tls,
         no_framework: args.no_framework,
         url_mode: args.url_mode.clone(),
         command: args.command.clone(),

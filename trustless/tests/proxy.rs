@@ -14,15 +14,10 @@ async fn start_mock_backend(
 async fn start_proxy(
     route_table: trustless::route::RouteTable,
 ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .unwrap();
-    let state = trustless::proxy::ProxyState {
+    let state = trustless::proxy::ProxyState::new(
         route_table,
-        registry: trustless::provider::ProviderRegistry::new(),
-        client,
-    };
+        trustless::provider::ProviderRegistry::new(),
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let app = trustless::proxy::proxy_router(state)
@@ -45,7 +40,14 @@ async fn test_end_to_end_forwarding() {
     let dir = tempfile::tempdir().unwrap();
     let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
     route_table
-        .add_route("test.lo.dev.invalid", backend_addr, None, false, false)
+        .add_route(
+            "test.lo.dev.invalid",
+            backend_addr,
+            None,
+            false,
+            false,
+            false,
+        )
         .unwrap();
 
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
@@ -73,7 +75,14 @@ async fn test_redirect_passed_through() {
     let dir = tempfile::tempdir().unwrap();
     let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
     route_table
-        .add_route("redir.lo.dev.invalid", backend_addr, None, false, false)
+        .add_route(
+            "redir.lo.dev.invalid",
+            backend_addr,
+            None,
+            false,
+            false,
+            false,
+        )
         .unwrap();
 
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
@@ -138,6 +147,7 @@ async fn test_no_route_html_for_browser() {
             None,
             false,
             false,
+            false,
         )
         .unwrap();
 
@@ -183,7 +193,7 @@ async fn test_backend_refused_returns_502() {
     // Point to a port that is not listening
     let dead_addr: std::net::SocketAddr = "127.0.0.1:19999".parse().unwrap();
     route_table
-        .add_route("dead.lo.dev.invalid", dead_addr, None, false, false)
+        .add_route("dead.lo.dev.invalid", dead_addr, None, false, false, false)
         .unwrap();
 
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
@@ -256,7 +266,14 @@ async fn test_forwarded_headers_present() {
     let dir = tempfile::tempdir().unwrap();
     let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
     route_table
-        .add_route("headers.lo.dev.invalid", backend_addr, None, false, false)
+        .add_route(
+            "headers.lo.dev.invalid",
+            backend_addr,
+            None,
+            false,
+            false,
+            false,
+        )
         .unwrap();
 
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
@@ -287,7 +304,7 @@ async fn test_websocket_upgrade() {
     let dir = tempfile::tempdir().unwrap();
     let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
     route_table
-        .add_route("ws.lo.dev.invalid", backend_addr, None, false, false)
+        .add_route("ws.lo.dev.invalid", backend_addr, None, false, false, false)
         .unwrap();
 
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
@@ -346,7 +363,14 @@ async fn test_hop_by_hop_headers_stripped_from_request() {
     let dir = tempfile::tempdir().unwrap();
     let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
     route_table
-        .add_route("hop.lo.dev.invalid", backend_addr, None, false, false)
+        .add_route(
+            "hop.lo.dev.invalid",
+            backend_addr,
+            None,
+            false,
+            false,
+            false,
+        )
         .unwrap();
 
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
@@ -391,7 +415,14 @@ async fn test_hop_by_hop_headers_stripped_from_response() {
     let dir = tempfile::tempdir().unwrap();
     let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
     route_table
-        .add_route("resp.lo.dev.invalid", backend_addr, None, false, false)
+        .add_route(
+            "resp.lo.dev.invalid",
+            backend_addr,
+            None,
+            false,
+            false,
+            false,
+        )
         .unwrap();
 
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
@@ -428,7 +459,14 @@ async fn test_loop_detection_returns_508() {
     let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
     let backend_addr: std::net::SocketAddr = "127.0.0.1:19999".parse().unwrap();
     route_table
-        .add_route("loop.lo.dev.invalid", backend_addr, None, false, false)
+        .add_route(
+            "loop.lo.dev.invalid",
+            backend_addr,
+            None,
+            false,
+            false,
+            false,
+        )
         .unwrap();
 
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
@@ -466,7 +504,14 @@ async fn test_hops_below_threshold_allowed() {
     let dir = tempfile::tempdir().unwrap();
     let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
     route_table
-        .add_route("hops.lo.dev.invalid", backend_addr, None, false, false)
+        .add_route(
+            "hops.lo.dev.invalid",
+            backend_addr,
+            None,
+            false,
+            false,
+            false,
+        )
         .unwrap();
 
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
@@ -504,7 +549,14 @@ async fn test_cookie_header_forwarded() {
     let dir = tempfile::tempdir().unwrap();
     let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
     route_table
-        .add_route("cookie.lo.dev.invalid", backend_addr, None, false, false)
+        .add_route(
+            "cookie.lo.dev.invalid",
+            backend_addr,
+            None,
+            false,
+            false,
+            false,
+        )
         .unwrap();
 
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
@@ -563,7 +615,14 @@ async fn test_websocket_upgrade_uses_origin_form() {
     let dir = tempfile::tempdir().unwrap();
     let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
     route_table
-        .add_route("ws-form.lo.dev.invalid", backend_addr, None, false, false)
+        .add_route(
+            "ws-form.lo.dev.invalid",
+            backend_addr,
+            None,
+            false,
+            false,
+            false,
+        )
         .unwrap();
 
     let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
@@ -607,4 +666,93 @@ async fn ws_echo_handler(ws: axum::extract::WebSocketUpgrade) -> impl axum::resp
             }
         }
     })
+}
+
+/// Start a mock HTTPS backend serving `handler` with a self-signed cert. ALPN offers both
+/// HTTP/2 and HTTP/1.1 so the proxy's negotiated version is observable by the handler.
+async fn start_mock_tls_backend(
+    handler: axum::Router,
+) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+    let cert_der = cert.cert.der().clone();
+    let key_der = rustls_pki_types::PrivateKeyDer::try_from(cert.key_pair.serialize_der()).unwrap();
+
+    let mut config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(vec![cert_der], key_der)
+        .unwrap();
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(config));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            let acceptor = acceptor.clone();
+            let handler = handler.clone();
+            tokio::spawn(async move {
+                let Ok(tls) = acceptor.accept(stream).await else {
+                    return;
+                };
+                let service = hyper::service::service_fn(move |req: http::Request<_>| {
+                    let handler = handler.clone();
+                    async move {
+                        use tower::ServiceExt as _;
+                        handler.oneshot(req.map(axum::body::Body::new)).await
+                    }
+                });
+                let _ = hyper_util::server::conn::auto::Builder::new(
+                    hyper_util::rt::TokioExecutor::new(),
+                )
+                .serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(tls), service)
+                .await;
+            });
+        }
+    });
+    (addr, handle)
+}
+
+#[tokio::test]
+async fn test_tls_backend_forwarding_negotiates_http2() {
+    // The handler echoes back the HTTP version it observed, so we can assert the proxy
+    // both spoke TLS and negotiated HTTP/2 with the backend via ALPN.
+    let backend = axum::Router::new().route(
+        "/proto",
+        axum::routing::get(|req: http::Request<axum::body::Body>| async move {
+            format!("{:?}", req.version())
+        }),
+    );
+    let (backend_addr, _backend_handle) = start_mock_tls_backend(backend).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let route_table = trustless::route::RouteTable::new(dir.path().to_path_buf());
+    route_table
+        .add_route(
+            "tls.lo.dev.invalid",
+            backend_addr,
+            None,
+            true, // tls
+            false,
+            false,
+        )
+        .unwrap();
+
+    let (proxy_addr, _proxy_handle) = start_proxy(route_table).await;
+
+    let resp = reqwest::Client::new()
+        .get(format!("http://{proxy_addr}/proto"))
+        .header("Host", "tls.lo.dev.invalid")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.text().await.unwrap(),
+        "HTTP/2.0",
+        "TLS backend with h2 ALPN should be reached over HTTP/2"
+    );
 }

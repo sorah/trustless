@@ -176,6 +176,7 @@ The exec'd command receives:
 | Variable | Value | Example |
 |---|---|---|
 | `PORT` | Local port the app should listen on | `4123` |
+| `TRUSTLESS_PROTOCOL` | Protocol the app should serve on `PORT` (`https` with `--tls`) | `http` |
 | `HOST` | Hostname registered with the proxy | `my-app.dev.example.com` |
 | `TRUSTLESS_HOST` | Same as `HOST` | `my-app.dev.example.com` |
 | `TRUSTLESS_PORT` | Proxy listen port | `1443` |
@@ -204,3 +205,13 @@ trustless route add my-db.dev.example.com 127.0.0.1:5432
 ```
 
 Static routes persist until explicitly removed with `trustless route remove` or until the proxy restarts (routes.json is ephemeral state).
+
+## TLS backends
+
+By default the proxy forwards to backends over plaintext HTTP. If your app terminates TLS itself, pass `--tls` so the proxy connects over `https://` instead. The backend's certificate is not verified (it's a loopback service you started), and the HTTP version (HTTP/1.1 or HTTP/2) is negotiated via ALPN.
+
+```bash
+trustless run --tls -- node server.js          # backend speaks HTTPS
+trustless exec --tls api -- node server.js
+trustless route add --tls api.dev.example.com 127.0.0.1:8443
+```

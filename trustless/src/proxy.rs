@@ -140,7 +140,103 @@ impl RequestScheme {
 pub struct ProxyState {
     pub route_table: crate::route::RouteTable,
     pub registry: crate::provider::ProviderRegistry,
+    /// Client for forwarding to backends, both cleartext (`http://`) and TLS (`https://`).
+    /// It accepts any certificate — `danger_accept_invalid_certs` only affects TLS handshakes,
+    /// and the backend is trusted by virtue of being a loopback service the developer launched.
+    /// For TLS backends, HTTP/1.1 vs HTTP/2 is negotiated via ALPN.
     pub client: reqwest::Client,
+    /// Connector for TLS backends on the raw upgrade (WebSocket) path, which bypasses
+    /// `client`. Mirrors its trust policy and pins ALPN to HTTP/1.1.
+    pub tls_connector: tokio_rustls::TlsConnector,
+}
+
+impl ProxyState {
+    pub fn new(
+        route_table: crate::route::RouteTable,
+        registry: crate::provider::ProviderRegistry,
+    ) -> Self {
+        Self {
+            route_table,
+            registry,
+            client: build_client(),
+            tls_connector: build_tls_connector(),
+        }
+    }
+}
+
+/// Certificate verifier that accepts any presented certificate. Backends are local dev
+/// servers whose certificate the developer controls (typically self-signed, with no PKI to
+/// validate against), so authenticating it would add friction without security benefit.
+#[derive(Debug)]
+struct AcceptAnyCert(std::sync::Arc<rustls::crypto::CryptoProvider>);
+
+impl rustls::client::danger::ServerCertVerifier for AcceptAnyCert {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls_pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls_pki_types::CertificateDer<'_>],
+        _server_name: &rustls_pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls_pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls_pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls_pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
+}
+
+fn build_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .dns_resolver(std::sync::Arc::new(LoopbackResolver))
+        // Only affects TLS backends (`--tls`); see `ProxyState::client`.
+        .danger_accept_invalid_certs(true)
+        .build()
+        .expect("failed to build reqwest client")
+}
+
+fn build_tls_connector() -> tokio_rustls::TlsConnector {
+    let provider = std::sync::Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let mut config = rustls::ClientConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .expect("aws_lc_rs provider supports the default protocol versions")
+        .dangerous()
+        .with_custom_certificate_verifier(std::sync::Arc::new(AcceptAnyCert(provider)))
+        .with_no_client_auth();
+    // The raw upgrade path speaks HTTP/1.1 only (WebSocket).
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    tokio_rustls::TlsConnector::from(std::sync::Arc::new(config))
 }
 
 /// Custom DNS resolver that returns both IPv6 and IPv4 loopback addresses for
@@ -238,6 +334,18 @@ async fn connect_loopback(backend: std::net::SocketAddr) -> std::io::Result<toki
     }
 }
 
+/// Marker for a stream usable as a hyper IO, abstracting over plain TCP and TLS-wrapped
+/// streams on the upgrade path.
+trait AsyncReadWrite: tokio::io::AsyncRead + tokio::io::AsyncWrite {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + ?Sized> AsyncReadWrite for T {}
+
+/// Resolved backend target: where to forward and over which protocol.
+#[derive(Clone, Copy, Debug)]
+struct Backend {
+    addr: std::net::SocketAddr,
+    protocol: crate::route::BackendProtocol,
+}
+
 pub fn proxy_router(state: ProxyState) -> axum::Router {
     axum::Router::new()
         .fallback(proxy_handler)
@@ -318,8 +426,11 @@ async fn proxy_handler(
         }));
     }
 
-    let backend = match state.route_table.resolve(&host) {
-        Ok(Some(addr)) => addr,
+    let backend = match state.route_table.resolve_entry(&host) {
+        Ok(Some(entry)) => Backend {
+            addr: entry.backend,
+            protocol: entry.protocol,
+        },
         Ok(None) => {
             tracing::warn!(host = %host, "no route found");
             return Err(mk_err(ProxyError::NoRoute(host)));
@@ -358,7 +469,8 @@ async fn proxy_handler(
         method = %method,
         host = %host,
         path = %path,
-        backend = %backend,
+        backend = %backend.addr,
+        backend_tls = backend.protocol.is_tls(),
         status = status.as_u16(),
         duration_ms = duration.as_millis() as u64,
         "proxied request"
@@ -505,17 +617,26 @@ async fn handle_request(
     state: std::sync::Arc<ProxyState>,
     client_addr: std::net::SocketAddr,
     req: axum::extract::Request,
-    backend: std::net::SocketAddr,
+    backend: Backend,
     original_host: &str,
     hops: u32,
     scheme: RequestScheme,
 ) -> Result<axum::response::Response, ProxyError> {
+    let Backend {
+        addr: backend,
+        protocol: backend_protocol,
+    } = backend;
     let (mut parts, body) = req.into_parts();
     let path = parts.uri.path_and_query().map_or("/", |pq| pq.as_str());
     let url = if backend.ip().is_loopback() {
-        format!("http://localhost:{}{}", backend.port(), path)
+        format!(
+            "{}://localhost:{}{}",
+            backend_protocol.scheme(),
+            backend.port(),
+            path
+        )
     } else {
-        format!("http://{}{}", backend, path)
+        format!("{}://{}{}", backend_protocol.scheme(), backend, path)
     };
 
     strip_hop_by_hop_headers(&mut parts.headers, false);
@@ -573,14 +694,18 @@ async fn handle_request(
 }
 
 async fn handle_upgrade(
-    _state: std::sync::Arc<ProxyState>,
+    state: std::sync::Arc<ProxyState>,
     client_addr: std::net::SocketAddr,
     req: axum::extract::Request,
-    backend: std::net::SocketAddr,
+    backend: Backend,
     original_host: &str,
     hops: u32,
     scheme: RequestScheme,
 ) -> Result<axum::response::Response, ProxyError> {
+    let Backend {
+        addr: backend,
+        protocol: backend_protocol,
+    } = backend;
     // Build the request to the backend
     let (mut parts, _body) = req.into_parts();
 
@@ -636,8 +761,26 @@ async fn handle_upgrade(
         }
     };
 
+    // Boxed so the handshake below is monomorphic over one IO type regardless of TLS.
+    let io: Box<dyn AsyncReadWrite + Send + Unpin> = if backend_protocol.is_tls() {
+        // The backend cert is not verified (see `AcceptAnyCert`), so the server name is just
+        // a placeholder to satisfy the handshake API — its value is never matched.
+        let server_name = rustls_pki_types::ServerName::try_from("localhost").unwrap();
+        match state.tls_connector.connect(server_name, stream).await {
+            Ok(tls) => Box::new(tls),
+            Err(e) => {
+                return Err(ProxyError::BackendConnect {
+                    backend,
+                    source: Box::new(e),
+                });
+            }
+        }
+    } else {
+        Box::new(stream)
+    };
+
     let (mut sender, conn) =
-        match hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(stream)).await {
+        match hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(io)).await {
             Ok(r) => r,
             Err(e) => {
                 return Err(ProxyError::BackendConnect {
@@ -884,17 +1027,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let route_table = crate::route::RouteTable::new(dir.path().to_path_buf());
         route_table
-            .add_route("my-app.lo.dev.invalid", backend_addr, None, false, false)
+            .add_route(
+                "my-app.lo.dev.invalid",
+                backend_addr,
+                None,
+                false,
+                false,
+                false,
+            )
             .unwrap();
 
-        let state = ProxyState {
-            route_table,
-            registry: crate::provider::ProviderRegistry::new(),
-            client: reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .unwrap(),
-        };
+        let state = ProxyState::new(route_table, crate::provider::ProviderRegistry::new());
         let app = test_app(state, RequestScheme::Https);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let proxy_addr = listener.local_addr().unwrap();
@@ -938,17 +1081,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let route_table = crate::route::RouteTable::new(dir.path().to_path_buf());
         route_table
-            .add_route("app.lo.dev.invalid", backend_addr, None, false, false)
+            .add_route(
+                "app.lo.dev.invalid",
+                backend_addr,
+                None,
+                false,
+                false,
+                false,
+            )
             .unwrap();
 
-        let state = ProxyState {
-            route_table,
-            registry: crate::provider::ProviderRegistry::new(),
-            client: reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .unwrap(),
-        };
+        let state = ProxyState::new(route_table, crate::provider::ProviderRegistry::new());
         let app = test_app(state, scheme);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let proxy_addr = listener.local_addr().unwrap();
@@ -1079,17 +1222,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let route_table = crate::route::RouteTable::new(dir.path().to_path_buf());
         route_table
-            .add_route("my-app.lo.dev.invalid", backend_addr, None, false, false)
+            .add_route(
+                "my-app.lo.dev.invalid",
+                backend_addr,
+                None,
+                false,
+                false,
+                false,
+            )
             .unwrap();
 
-        let state = ProxyState {
-            route_table,
-            registry: crate::provider::ProviderRegistry::new(),
-            client: reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .unwrap(),
-        };
+        let state = ProxyState::new(route_table, crate::provider::ProviderRegistry::new());
         let app = test_app(state, RequestScheme::Https);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let proxy_addr = listener.local_addr().unwrap();
@@ -1185,17 +1328,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let route_table = crate::route::RouteTable::new(dir.path().to_path_buf());
         route_table
-            .add_route("my-app.lo.dev.invalid", backend_addr, None, false, false)
+            .add_route(
+                "my-app.lo.dev.invalid",
+                backend_addr,
+                None,
+                false,
+                false,
+                false,
+            )
             .unwrap();
 
-        let state = ProxyState {
-            route_table,
-            registry: crate::provider::ProviderRegistry::new(),
-            client: reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .unwrap(),
-        };
+        let state = ProxyState::new(route_table, crate::provider::ProviderRegistry::new());
         let app = test_app(state, RequestScheme::Https);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let proxy_addr = listener.local_addr().unwrap();
