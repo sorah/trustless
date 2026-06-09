@@ -176,6 +176,7 @@ The exec'd command receives:
 | Variable | Value | Example |
 |---|---|---|
 | `PORT` | Local port the app should listen on | `4123` |
+| `TRUSTLESS_PROTOCOL` | Protocol the app should serve on `PORT` (`https` with `--tls`) | `http` |
 | `HOST` | Hostname registered with the proxy | `my-app.dev.example.com` |
 | `TRUSTLESS_HOST` | Same as `HOST` | `my-app.dev.example.com` |
 | `TRUSTLESS_PORT` | Proxy listen port | `1443` |

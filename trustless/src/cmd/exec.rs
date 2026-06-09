@@ -489,6 +489,12 @@ mod executor {
         // The sidecar is in its own process, and no other threads exist here.
         unsafe {
             std::env::set_var("PORT", port.to_string());
+            // Protocol the command must serve on PORT (set by --tls), independent of whether
+            // a public URL resolved.
+            std::env::set_var(
+                "TRUSTLESS_PROTOCOL",
+                if params.tls { "https" } else { "http" },
+            );
             if let Some(s) = &service {
                 std::env::set_var("HOST", &s.host);
                 std::env::set_var("TRUSTLESS_HOST", &s.host);
